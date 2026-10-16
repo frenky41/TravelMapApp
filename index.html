@@ -366,6 +366,19 @@ function initMap(key){
 }
 const empty=()=>({type:'FeatureCollection',features:[]});
 function addLayers(){
+  /* Trip routes: one great-circle segment per leg, drawn under the markers,
+     with arrowheads (SDF image, tinted to the line colour) pointing in travel direction. */
+  map.addSource('routes',{type:'geojson',data:empty()});
+  if(!map.hasImage('route-arrow')) map.addImage('route-arrow',arrowImage(),{sdf:true,pixelRatio:2});
+  map.addLayer({id:'route-casing',type:'line',source:'routes',layout:{'line-cap':'round','line-join':'round'},
+    paint:{'line-color':'rgba(0,0,0,.55)','line-width':['interpolate',['linear'],['zoom'],1,3,6,5.5]}});
+  map.addLayer({id:'route-lines',type:'line',source:'routes',layout:{'line-cap':'round','line-join':'round'},
+    paint:{'line-color':['get','color'],'line-width':['interpolate',['linear'],['zoom'],1,1.6,6,3],'line-opacity':0.9}});
+  map.addLayer({id:'route-arrows',type:'symbol',source:'routes',
+    layout:{'symbol-placement':'line','symbol-spacing':['interpolate',['linear'],['zoom'],1,70,6,140],
+            'icon-image':'route-arrow','icon-size':['interpolate',['linear'],['zoom'],1,0.55,6,0.85],
+            'icon-rotation-alignment':'map','icon-pitch-alignment':'map','icon-allow-overlap':true,'icon-ignore-placement':true},
+    paint:{'icon-color':['get','color'],'icon-halo-color':'rgba(0,0,0,.7)','icon-halo-width':1.2}});
   map.addSource('points',{type:'geojson',data:empty()});
   map.addLayer({id:'trip-halo',type:'circle',source:'points',
     paint:{'circle-radius':['interpolate',['linear'],['zoom'],1,12,6,24],'circle-color':['get','color'],'circle-opacity':0.18,'circle-blur':0.6}});
@@ -426,7 +439,47 @@ function drawIconGrid(){
 function setIcon(e){ selIcon=(e||'').trim(); $('f-icon').value=selIcon; drawIconGrid(); }
 $('f-icon').addEventListener('input',e=>{ selIcon=e.target.value.trim(); drawIconGrid(); });
 
+/** Right-pointing arrowhead (line direction = +x), used as an SDF so it takes the line colour. */
+function arrowImage(){
+  const W=36,H=36,c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d');
+  g.beginPath(); g.moveTo(W*0.82,H/2); g.lineTo(W*0.2,H*0.18); g.lineTo(W*0.36,H/2); g.lineTo(W*0.2,H*0.82); g.closePath();
+  g.fillStyle='#000'; g.fill();
+  return g.getImageData(0,0,W,H);
+}
 /* ===================== GEOMETRY ===================== */
+/** Great-circle path a→b; longitudes unwrapped so legs across the 180° meridian don't wrap around the globe. */
+function arc(a,b,n=48){
+  const r=Math.PI/180,d=180/Math.PI,φ1=a.lat*r,λ1=a.lng*r,φ2=b.lat*r,λ2=b.lng*r;
+  const Δ=2*Math.asin(Math.sqrt(Math.sin((φ2-φ1)/2)**2+Math.cos(φ1)*Math.cos(φ2)*Math.sin((λ2-λ1)/2)**2));
+  if(Δ<1e-9) return [[a.lng,a.lat],[b.lng,b.lat]];
+  const pts=[];
+  for(let i=0;i<=n;i++){
+    const f=i/n,A=Math.sin((1-f)*Δ)/Math.sin(Δ),B=Math.sin(f*Δ)/Math.sin(Δ);
+    const x=A*Math.cos(φ1)*Math.cos(λ1)+B*Math.cos(φ2)*Math.cos(λ2);
+    const y=A*Math.cos(φ1)*Math.sin(λ1)+B*Math.cos(φ2)*Math.sin(λ2);
+    const z=A*Math.sin(φ1)+B*Math.sin(φ2);
+    pts.push([Math.atan2(y,x)*d,Math.atan2(z,Math.sqrt(x*x+y*y))*d]);
+  }
+  pts[0][0]=a.lng;
+  for(let i=1;i<pts.length;i++){ const dx=pts[i][0]-pts[i-1][0]; if(dx>180)pts[i][0]-=360; else if(dx<-180)pts[i][0]+=360; }
+  return pts;
+}
+/** One LineString per leg, only inside a trip, in date order (first → last destination). */
+function routeFeatures(act){
+  const feats=[];
+  groups(act).forEach(g=>{
+    if(g.dests.length<2) return;
+    const color=colorFor(g.start);
+    for(let i=1;i<g.dests.length;i++){
+      const a=g.dests[i-1],b=g.dests[i];
+      if(Math.abs(a.lat-b.lat)<1e-6&&Math.abs(a.lng-b.lng)<1e-6) continue;   // same place twice in a row
+      feats.push({type:'Feature',geometry:{type:'LineString',coordinates:arc(a,b)},
+        properties:{color,trip:g.name,leg:i,from:a.title,to:b.title}});
+    }
+  });
+  return {type:'FeatureCollection',features:feats};
+}
 function haversine(a,b){
   const R=6371,r=Math.PI/180,dLat=(b.lat-a.lat)*r,dLng=(b.lng-a.lng)*r;
   const s=Math.sin(dLat/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLng/2)**2;
@@ -477,6 +530,7 @@ function render(){
         properties:{title:last.title,visits:g.length,color,img:ensureImage(last.icon||'',color),
                     order:new Date(last.date).getTime()/DAY,ids:g.map(t=>t.id).join('|')}};
     })});
+    map.getSource('routes').setData(routeFeatures(act));
   }
   $('dateLabel').textContent=!s.length?'No trips yet':($('modeSel').value==='all'?'All time':fmt(cursorTime()));
   const nG=groups(act).length, selG=tripSel&&groups(s).find(g=>g.key===tripSel);
@@ -512,7 +566,7 @@ function renderTripList(s){
       (multi?`<a data-tren="${esc(g.key)}">Rename</a><a data-tdel="${esc(g.key)}">Delete trip</a>`
             :`<a data-edit="${one.id}">Edit</a><a data-del="${one.id}">Delete</a>`)+`</div></div>`;
     if(multi) html+=g.dests.map((t,i)=>`<div class="dest">
-      <div>${t.icon?`<span class="ic">${esc(t.icon)}</span>`:`<span style="color:var(--muted)">${i+1}.</span> `}<b>${esc(t.title)}</b></div>
+      <div><span style="color:var(--muted)">${i+1}.</span> ${t.icon?`<span class="ic">${esc(t.icon)}</span>`:''}<b>${esc(t.title)}</b></div>
       <div class="m">${t.date}${t.end?' → '+t.end:''}${t.country?' · '+esc(t.country):''}</div>
       <div class="acts"><a data-fly="${t.id}">Fly to</a><a data-edit="${t.id}">Edit</a><a data-del="${t.id}">Delete</a></div></div>`).join('');
     d.innerHTML=html; box.appendChild(d);
@@ -533,14 +587,14 @@ function renderPeople(s){
   });
 }
 function renderStats(act){
-  let km=0; for(let i=1;i<act.length;i++) km+=haversine(act[i-1],act[i]);
+  let km=0; groups(act).forEach(g=>{ for(let i=1;i<g.dests.length;i++) km+=haversine(g.dests[i-1],g.dests[i]); });
   $('statsBox').innerHTML=`
     <div class="stat"><b>${groups(act).length}</b><span>trips</span></div>
     <div class="stat"><b>${act.length}</b><span>destinations</span></div>
     <div class="stat"><b>${new Set(act.map(t=>t.country).filter(Boolean)).size}</b><span>countries</span></div>
     <div class="stat"><b>${new Set(act.flatMap(t=>t.people)).size}</b><span>travel companions</span></div>
     <div class="stat"><b>${Math.round(groups(act).reduce((a,g)=>a+(new Date(g.end)-new Date(g.start))/DAY+1,0))}</b><span>days travelling</span></div>
-    <div class="stat"><b>${Math.round(km).toLocaleString()}</b><span>km between destinations (straight-line, in date order)</span></div>`;
+    <div class="stat"><b>${Math.round(km).toLocaleString()}</b><span>km along trip routes (straight-line legs)</span></div>`;
 }
 
 /* ===================== POPUP / ACTIONS ===================== */
