@@ -90,6 +90,14 @@
   .pop button.del{border-color:var(--danger);color:var(--danger)}
   #pickBanner{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:6;background:var(--accent2);color:#1b1200;padding:7px 14px;border-radius:8px;font-size:12.5px;font-weight:600;display:none}
   .sect{border-top:1px solid var(--line);margin-top:16px;padding-top:6px}
+  .icon-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:5px}
+  .icon-grid button{background:var(--panel2);border:1px solid var(--line);border-radius:8px;height:34px;font-size:18px;cursor:pointer;padding:0;line-height:1;color:var(--txt)}
+  .icon-grid button:hover{border-color:var(--accent)}
+  .icon-grid button.sel{border-color:var(--accent);background:#1d3550;box-shadow:0 0 0 1px var(--accent)}
+  .icon-grid button.dot::after{content:'';display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--accent);border:2px solid #fff}
+  .icon-custom{display:flex;gap:8px;align-items:center;margin-top:6px}
+  .icon-custom input{width:80px;text-align:center;font-size:16px;padding:5px}
+  .trip .ic{margin-right:6px}
   h4{margin:4px 0 0;font-size:13px}
   @media (max-width:760px){
     #sidebar{position:absolute;z-index:10;height:100%;width:88vw;min-width:0}
@@ -129,6 +137,9 @@
       </div>
       <label>Country</label>
       <input id="f-country" placeholder="Cook Islands" />
+      <label>Marker icon</label>
+      <div class="icon-grid" id="iconGrid"></div>
+      <div class="icon-custom"><input id="f-icon" maxlength="8" placeholder="🙂" /><span class="hint" style="margin:0">Or type or paste any emoji. Leave empty for a plain dot.</span></div>
       <label>People (Enter or comma to add)</label>
       <input id="f-people" placeholder="Ana, Nejc…" list="peopleList" autocomplete="off" />
       <datalist id="peopleList"></datalist>
@@ -188,7 +199,7 @@
       </div>
       <label>Import (JSON or CSV)</label>
       <input type="file" id="impFile" accept=".json,.csv,.txt" />
-      <div class="hint">CSV columns: <code>date,end,title,country,lat,lng,people,notes</code>. Separate people with <code>;</code>. Rows without lat/lng are geocoded automatically.</div>
+      <div class="hint">CSV columns: <code>date,end,title,country,lat,lng,people,notes,icon</code>. Separate people with <code>;</code>. Rows without lat/lng are geocoded automatically.</div>
       <label>Bulk paste</label>
       <textarea id="bulkBox" placeholder="2019-08-12, Rarotonga, Cook Islands, Ana; Nejc&#10;2021-05-03, Kyoto, Japan, Ana" style="min-height:90px"></textarea>
       <button class="btn ghost" id="bulkBtn" style="margin-top:8px;width:100%">Add pasted lines (date, place, country, people)</button>
@@ -245,7 +256,7 @@
 
 <script>
 /* ===================== STATE =====================
-   Each trip: {id,title,country,lat,lng,date,end,people[],notes,
+   Each trip: {id,title,country,lat,lng,date,end,people[],notes,icon(emoji or ''),
                updatedAt(ms), deleted(bool), _synced(ms of last version confirmed on the sheet)} */
 const LS_KEY='travelGlobe.v1', LS_MB='travelGlobe.mb', LS_STYLE='travelGlobe.style', LS_SYNC='travelGlobe.sync';
 let trips=[], editingPeople=[], personFilter=null, pickMode=false;
@@ -261,7 +272,7 @@ function load(){
 function save(){ localStorage.setItem(LS_KEY,JSON.stringify(trips)); }
 const live=()=>trips.filter(t=>!t.deleted);
 const sorted=()=>live().sort((a,b)=>a.date.localeCompare(b.date));
-function newTrip(o){ return {id:uid(),end:'',notes:'',country:'',people:[],...o,updatedAt:Date.now(),deleted:false}; }
+function newTrip(o){ return {id:uid(),end:'',notes:'',country:'',people:[],icon:'',...o,updatedAt:Date.now(),deleted:false}; }
 /** Call after any user change: re-render, persist, and queue a sync. */
 function changed(){ render(); scheduleSync(); }
 
@@ -319,40 +330,71 @@ function initMap(key){
 }
 const empty=()=>({type:'FeatureCollection',features:[]});
 function addLayers(){
-  map.addSource('routes',{type:'geojson',data:empty()});
   map.addSource('points',{type:'geojson',data:empty()});
-  map.addLayer({id:'route-lines',type:'line',source:'routes',layout:{'line-cap':'round','line-join':'round'},
-    paint:{'line-color':['get','color'],'line-width':['interpolate',['linear'],['zoom'],1,1.2,6,2.6],'line-opacity':0.6}});
   map.addLayer({id:'trip-halo',type:'circle',source:'points',
-    paint:{'circle-radius':['interpolate',['linear'],['zoom'],1,10,6,22],'circle-color':['get','color'],'circle-opacity':0.2,'circle-blur':0.6}});
-  map.addLayer({id:'trip-points',type:'circle',source:'points',
-    paint:{'circle-radius':['interpolate',['linear'],['zoom'],1,['+',3.5,['*',0.9,['get','visits']]],6,['+',7,['*',1.6,['get','visits']]]],
-           'circle-color':['get','color'],'circle-stroke-width':1.5,'circle-stroke-color':'#fff','circle-opacity':0.95}});
+    paint:{'circle-radius':['interpolate',['linear'],['zoom'],1,12,6,24],'circle-color':['get','color'],'circle-opacity':0.18,'circle-blur':0.6}});
+  // Size grows a little with the number of visits (capped at 5).
+  const vis=['min',['get','visits'],5];
+  map.addLayer({id:'trip-points',type:'symbol',source:'points',
+    layout:{'icon-image':['get','img'],
+            'icon-size':['interpolate',['linear'],['zoom'],1,['*',0.62,['+',1,['*',0.1,vis]]],6,['*',0.95,['+',1,['*',0.1,vis]]]],
+            'icon-allow-overlap':true,'icon-ignore-placement':true,
+            'symbol-sort-key':['get','order']}});
   map.addLayer({id:'trip-labels',type:'symbol',source:'points',
-    layout:{'text-field':['get','title'],'text-size':11.5,'text-offset':[0,1.3],'text-anchor':'top','text-font':['Open Sans Semibold'],'text-optional':true},
+    layout:{'text-field':['get','title'],'text-size':11.5,'text-offset':[0,1.6],'text-anchor':'top','text-font':['Open Sans Semibold'],'text-optional':true},
     paint:{'text-color':'#fff','text-halo-color':'rgba(0,0,0,.85)','text-halo-width':1.4}});
 }
+
+/* ===================== MARKER ICONS =====================
+   Each marker is drawn on a canvas: a disc in the trip's year colour with the
+   emoji in the middle (or a plain dot when no emoji is set), then registered
+   with map.addImage. Images are cached per emoji + colour.                    */
+const ICONS=[
+  ['','Plain dot'],['📍','Pin'],['🏖️','Beach'],['🏝️','Island'],['⛰️','Mountains'],['🥾','Hiking'],['⛷️','Skiing'],['🏕️','Camping'],
+  ['🏙️','City'],['🏛️','Culture'],['🍷','Food & wine'],['🤿','Diving'],['⛵','Sailing'],['🚗','Road trip'],['✈️','Flight'],['💼','Business'],
+  ['🎉','Event'],['❤️','Special'],['👨‍👩‍👧‍👦','Family'],['🐘','Wildlife'],['🌋','Volcano'],['🏰','Castle'],['⛪','Church'],['⭐','Favourite']
+];
+const ICON_PX=64;
+function markerImage(emoji,color){
+  const c=document.createElement('canvas'); c.width=c.height=ICON_PX;
+  const g=c.getContext('2d'), m=ICON_PX/2;
+  g.beginPath();
+  if(emoji){
+    g.arc(m,m,m-4,0,Math.PI*2); g.fillStyle=color; g.fill();
+    g.lineWidth=3.5; g.strokeStyle='#fff'; g.stroke();
+    g.font=`${Math.round(ICON_PX*0.5)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+    g.textAlign='center'; g.textBaseline='middle';
+    g.fillText(emoji,m,m+ICON_PX*0.03);
+  }else{
+    g.arc(m,m,ICON_PX*0.2,0,Math.PI*2); g.fillStyle=color; g.fill();
+    g.lineWidth=4; g.strokeStyle='#fff'; g.stroke();
+  }
+  return g.getImageData(0,0,ICON_PX,ICON_PX);
+}
+function ensureImage(emoji,color){
+  const id='m|'+emoji+'|'+color;
+  if(!map.hasImage(id)) map.addImage(id,markerImage(emoji,color),{pixelRatio:2});
+  return id;
+}
+let selIcon='';
+function drawIconGrid(){
+  const grid=$('iconGrid'); grid.innerHTML='';
+  ICONS.forEach(([e,name])=>{
+    const b=document.createElement('button'); b.type='button'; b.title=name;
+    if(e) b.textContent=e; else b.className='dot';
+    if(e===selIcon) b.classList.add('sel');
+    b.onclick=()=>setIcon(e);
+    grid.appendChild(b);
+  });
+}
+function setIcon(e){ selIcon=(e||'').trim(); $('f-icon').value=selIcon; drawIconGrid(); }
+$('f-icon').addEventListener('input',e=>{ selIcon=e.target.value.trim(); drawIconGrid(); });
 
 /* ===================== GEOMETRY ===================== */
 function haversine(a,b){
   const R=6371,r=Math.PI/180,dLat=(b.lat-a.lat)*r,dLng=(b.lng-a.lng)*r;
   const s=Math.sin(dLat/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLng/2)**2;
   return 2*R*Math.asin(Math.sqrt(s));
-}
-function arc(a,b,n=64){
-  const r=Math.PI/180,d=180/Math.PI,φ1=a.lat*r,λ1=a.lng*r,φ2=b.lat*r,λ2=b.lng*r;
-  const Δ=2*Math.asin(Math.sqrt(Math.sin((φ2-φ1)/2)**2+Math.cos(φ1)*Math.cos(φ2)*Math.sin((λ2-λ1)/2)**2));
-  if(Δ===0) return [[a.lng,a.lat],[b.lng,b.lat]];
-  const pts=[];
-  for(let i=0;i<=n;i++){
-    const f=i/n,A=Math.sin((1-f)*Δ)/Math.sin(Δ),B=Math.sin(f*Δ)/Math.sin(Δ);
-    const x=A*Math.cos(φ1)*Math.cos(λ1)+B*Math.cos(φ2)*Math.cos(λ2);
-    const y=A*Math.cos(φ1)*Math.sin(λ1)+B*Math.cos(φ2)*Math.sin(λ2);
-    const z=A*Math.sin(φ1)+B*Math.sin(φ2);
-    pts.push([Math.atan2(y,x)*d,Math.atan2(z,Math.sqrt(x*x+y*y))*d]);
-  }
-  for(let i=1;i<pts.length;i++){ const dx=pts[i][0]-pts[i-1][0]; if(dx>180)pts[i][0]-=360; else if(dx<-180)pts[i][0]+=360; }
-  return pts;
 }
 let yMin=0,yMax=0;
 function colorFor(dateStr){
@@ -393,16 +435,11 @@ function render(){
     const byLoc=new Map();
     act.forEach(t=>{ const k=t.lat.toFixed(3)+','+t.lng.toFixed(3); if(!byLoc.has(k))byLoc.set(k,[]); byLoc.get(k).push(t); });
     map.getSource('points').setData({type:'FeatureCollection',features:[...byLoc.values()].map(g=>{
-      const last=g[g.length-1];
+      const last=g[g.length-1], color=colorFor(last.date);
       return {type:'Feature',geometry:{type:'Point',coordinates:[last.lng,last.lat]},
-        properties:{title:last.title,visits:g.length,color:colorFor(last.date),ids:g.map(t=>t.id).join('|')}};
+        properties:{title:last.title,visits:g.length,color,img:ensureImage(last.icon||'',color),
+                    order:new Date(last.date).getTime()/DAY,ids:g.map(t=>t.id).join('|')}};
     })});
-    const lines=[];
-    for(let i=1;i<act.length;i++){
-      const a=act[i-1],b=act[i]; if(a.lat===b.lat&&a.lng===b.lng) continue;
-      lines.push({type:'Feature',geometry:{type:'LineString',coordinates:arc(a,b)},properties:{color:colorFor(b.date)}});
-    }
-    map.getSource('routes').setData({type:'FeatureCollection',features:lines});
   }
   $('dateLabel').textContent=!s.length?'No trips yet':($('modeSel').value==='all'?'All time':fmt(cursorTime()));
   $('countLabel').textContent=`${act.length} trip${act.length===1?'':'s'} shown${personFilter?' · with '+personFilter:''}`;
@@ -419,7 +456,7 @@ function renderTripList(s){
     const y=t.date.slice(0,4);
     if(y!==year){ year=y; const h=document.createElement('div'); h.className='yr'; h.textContent=y; box.appendChild(h); }
     const d=document.createElement('div'); d.className='trip'; d.style.borderLeftColor=colorFor(t.date);
-    d.innerHTML=`<div class="t">${esc(t.title)}</div>
+    d.innerHTML=`<div class="t">${t.icon?`<span class="ic">${esc(t.icon)}</span>`:''}${esc(t.title)}</div>
       <div class="m">${t.date}${t.end?' → '+t.end:''}${t.country?' · '+esc(t.country):''}</div>
       ${t.people.length?`<div class="p">${t.people.map(esc).join(' · ')}</div>`:''}
       <div class="acts"><a data-fly="${t.id}">Fly to</a><a data-edit="${t.id}">Edit</a><a data-del="${t.id}">Delete</a></div>`;
@@ -446,7 +483,7 @@ function renderStats(act){
     <div class="stat"><b>${act.length}</b><span>trips</span></div>
     <div class="stat"><b>${new Set(act.map(t=>t.country).filter(Boolean)).size}</b><span>countries</span></div>
     <div class="stat"><b>${new Set(act.flatMap(t=>t.people)).size}</b><span>travel companions</span></div>
-    <div class="stat"><b>${Math.round(km).toLocaleString()}</b><span>km travelled (straight-line)</span></div>`;
+    <div class="stat"><b>${Math.round(km).toLocaleString()}</b><span>km between destinations (straight-line, in date order)</span></div>`;
 }
 
 /* ===================== POPUP / ACTIONS ===================== */
@@ -456,7 +493,7 @@ function showPopup(f,lngLat){
   new maplibregl.Popup({maxWidth:'300px'}).setLngLat(lngLat).setHTML(`<div class="pop">
     <h3>${esc(f.properties.title)}</h3>
     <div class="pm">${esc(items[0].country||'')} · ${items.length} visit${items.length>1?'s':''}</div>
-    ${items.map(t=>`<div class="pv"><b>${t.date}${t.end?' → '+t.end:''}</b>
+    ${items.map(t=>`<div class="pv"><b>${t.icon?esc(t.icon)+' ':''}${t.date}${t.end?' → '+t.end:''}</b>
       ${t.people.length?`<div class="pp">with ${t.people.map(esc).join(', ')}</div>`:''}
       ${t.notes?`<div style="margin-top:4px;color:var(--muted)">${esc(t.notes)}</div>`:''}
       <button data-edit="${t.id}">Edit</button><button class="del" data-del="${t.id}">Delete</button></div>`).join('')}
@@ -534,7 +571,7 @@ $('saveBtn').onclick=()=>{
   const lat=parseFloat($('f-lat').value),lng=parseFloat($('f-lng').value),date=$('f-date').value,title=$('f-title').value.trim();
   if(!title||isNaN(lat)||isNaN(lng)||!date){ $('saveHint').textContent='Title, coordinates and start date are required.'; return; }
   const id=$('f-id').value;
-  const fields={title,country:$('f-country').value.trim(),lat,lng,date,end:$('f-end').value||'',people:[...editingPeople],notes:$('f-notes').value.trim()};
+  const fields={title,country:$('f-country').value.trim(),lat,lng,date,end:$('f-end').value||'',people:[...editingPeople],notes:$('f-notes').value.trim(),icon:selIcon};
   if(id){
     trips=trips.map(t=>t.id===id?{...t,...fields,updatedAt:Date.now()}:t);
   }else{
@@ -546,13 +583,13 @@ $('saveBtn').onclick=()=>{
 $('clearBtn').onclick=clearForm;
 function clearForm(){
   ['f-id','f-title','f-lat','f-lng','f-date','f-end','f-country','f-notes','f-search','f-people'].forEach(i=>$(i).value='');
-  editingPeople=[]; drawChips(); $('geoResults').style.display='none'; $('saveHint').textContent='';
+  editingPeople=[]; drawChips(); setIcon(''); $('geoResults').style.display='none'; $('saveHint').textContent='';
 }
 function editTrip(id){
   const t=trips.find(x=>x.id===id); if(!t) return;
   $('f-id').value=t.id; $('f-title').value=t.title; $('f-lat').value=t.lat; $('f-lng').value=t.lng;
   $('f-date').value=t.date; $('f-end').value=t.end||''; $('f-country').value=t.country||''; $('f-notes').value=t.notes||'';
-  editingPeople=[...t.people]; drawChips();
+  editingPeople=[...t.people]; drawChips(); setIcon(t.icon||'');
   document.querySelector('.tabs button[data-tab="add"]').click();
   $('sidebar').classList.remove('collapsed');
   $('saveHint').textContent='Editing. Press Save to update.';
@@ -711,8 +748,8 @@ $('mbApply').onclick=()=>{
 function download(name,content,type){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([content],{type})); a.download=name; a.click(); }
 $('expJson').onclick=()=>download('travel-trips.json',JSON.stringify(sorted().map(strip),null,2),'application/json');
 $('expCsv').onclick=()=>{
-  const rows=[['date','end','title','country','lat','lng','people','notes']];
-  sorted().forEach(t=>rows.push([t.date,t.end||'',t.title,t.country||'',t.lat,t.lng,t.people.join(';'),(t.notes||'').replace(/\n/g,' ')]));
+  const rows=[['date','end','title','country','lat','lng','people','notes','icon']];
+  sorted().forEach(t=>rows.push([t.date,t.end||'',t.title,t.country||'',t.lat,t.lng,t.people.join(';'),(t.notes||'').replace(/\n/g,' '),t.icon||'']));
   download('travel-trips.csv',rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n'),'text/csv');
 };
 function parseCsvLine(ln){
@@ -732,7 +769,7 @@ $('impFile').onchange=async e=>{
   try{
     if(f.name.toLowerCase().endsWith('.json')){
       JSON.parse(txt).forEach(t=>trips.push(newTrip({title:t.title,country:t.country||'',lat:+t.lat,lng:+t.lng,date:t.date,end:t.end||'',
-        people:Array.isArray(t.people)?t.people:splitPeople(t.people),notes:t.notes||''})));
+        people:Array.isArray(t.people)?t.people:splitPeople(t.people),notes:t.notes||'',icon:t.icon||''})));
     }else{
       const lines=txt.trim().split(/\r?\n/),cols=parseCsvLine(lines.shift().toLowerCase());
       for(const ln of lines){
@@ -742,7 +779,7 @@ $('impFile').onchange=async e=>{
           const g=await geocode(`${o.title} ${o.country||''}`); await sleep(1100);
           if(!g[0]) continue; lat=+g[0].lat; lng=+g[0].lon;
         }
-        trips.push(newTrip({title:o.title,country:o.country||'',lat,lng,date:o.date,end:o.end||'',people:splitPeople(o.people),notes:o.notes||''}));
+        trips.push(newTrip({title:o.title,country:o.country||'',lat,lng,date:o.date,end:o.end||'',people:splitPeople(o.people),notes:o.notes||'',icon:o.icon||''}));
       }
     }
     changed();
@@ -766,14 +803,14 @@ $('bulkBtn').onclick=async()=>{
   $('bulkBox').value='';
 };
 $('demoBtn').onclick=()=>{
-  [['2014-07-18','Barcelona','Spain',41.3874,2.1686,'Ana'],
-   ['2016-02-09','Reykjavík','Iceland',64.1466,-21.9426,'Ana;Nejc'],
-   ['2017-09-03','Kyoto','Japan',35.0116,135.7681,'Ana'],
-   ['2019-08-12','Rarotonga','Cook Islands',-21.2367,-159.7777,'Ana;Maja;Luka'],
-   ['2021-06-21','Lofoten','Norway',68.15,13.6,'Nejc'],
-   ['2023-04-05','Marrakesh','Morocco',31.6295,-7.9811,'Ana;Maja'],
-   ['2025-10-11','El Chaltén','Argentina',-49.3315,-72.8863,'Nejc;Luka']
-  ].forEach(d=>trips.push(newTrip({date:d[0],title:d[1],country:d[2],lat:d[3],lng:d[4],people:d[5].split(';')})));
+  [['2014-07-18','Barcelona','Spain',41.3874,2.1686,'Ana','🏙️'],
+   ['2016-02-09','Reykjavík','Iceland',64.1466,-21.9426,'Ana;Nejc','🌋'],
+   ['2017-09-03','Kyoto','Japan',35.0116,135.7681,'Ana','🏛️'],
+   ['2019-08-12','Rarotonga','Cook Islands',-21.2367,-159.7777,'Ana;Maja;Luka','🏝️'],
+   ['2021-06-21','Lofoten','Norway',68.15,13.6,'Nejc','⛰️'],
+   ['2023-04-05','Marrakesh','Morocco',31.6295,-7.9811,'Ana;Maja','🍷'],
+   ['2025-10-11','El Chaltén','Argentina',-49.3315,-72.8863,'Nejc;Luka','🥾']
+  ].forEach(d=>trips.push(newTrip({date:d[0],title:d[1],country:d[2],lat:d[3],lng:d[4],people:d[5].split(';'),icon:d[6]})));
   changed();
 };
 $('wipeBtn').onclick=()=>{
@@ -784,7 +821,7 @@ $('wipeBtn').onclick=()=>{
 
 /* ===================== BOOT ===================== */
 readSetupLink();
-load(); drawChips();
+load(); drawChips(); drawIconGrid();
 initMap(localStorage.getItem(LS_STYLE)||'esriDark');
 render();
 updateSyncPanel();
