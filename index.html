@@ -98,6 +98,21 @@
   .icon-custom{display:flex;gap:8px;align-items:center;margin-top:6px}
   .icon-custom input{width:80px;text-align:center;font-size:16px;padding:5px}
   .trip .ic{margin-right:6px}
+  .tgroup{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;margin-bottom:8px;overflow:hidden}
+  .tgroup.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .thead{padding:8px 10px;cursor:pointer}
+  .thead:hover{background:#212b38}
+  .thead .t{font-size:13px;font-weight:600}
+  .thead .m,.dest .m{font-size:11px;color:var(--muted);margin-top:2px}
+  .thead .p{font-size:11px;color:var(--accent);margin-top:3px}
+  .acts{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:6px}
+  .acts a{font-size:11px;color:var(--muted);cursor:pointer}
+  .acts a:hover{color:var(--accent)}
+  .dest{padding:7px 10px 7px 20px;border-top:1px solid var(--line);font-size:12.5px;position:relative}
+  .dest::before{content:'';position:absolute;left:10px;top:0;bottom:0;border-left:1px dashed var(--line)}
+  .dest .acts{margin-top:3px}
+  .selbar{background:#1d3550;border:1px solid var(--accent);border-radius:8px;padding:7px 10px;font-size:12px;margin:10px 0;display:flex;justify-content:space-between;gap:8px}
+  .selbar a,#countLabel a{color:var(--accent);cursor:pointer}
   h4{margin:4px 0 0;font-size:13px}
   @media (max-width:760px){
     #sidebar{position:absolute;z-index:10;height:100%;width:88vw;min-width:0}
@@ -125,7 +140,11 @@
       <input id="f-search" placeholder="e.g. Rarotonga, Cook Islands" autocomplete="off" />
       <div class="geo-results" id="geoResults"></div>
       <div class="hint">Type and press <b>Enter</b> to search, or <a id="pickLink" style="color:var(--accent);cursor:pointer">pick a point on the map</a>.</div>
-      <label>Title / place</label>
+      <label>Trip (optional)</label>
+      <input id="f-trip" list="tripNames" placeholder="e.g. Euro trip 2019" autocomplete="off" />
+      <datalist id="tripNames"></datalist>
+      <div class="hint">Destinations with the same trip name are grouped into one trip. Leave empty for a single-destination trip.</div>
+      <label>Destination / place</label>
       <input id="f-title" placeholder="Rarotonga" />
       <div class="row">
         <div><label>Latitude</label><input id="f-lat" type="number" step="any" /></div>
@@ -147,14 +166,16 @@
       <label>Notes</label>
       <textarea id="f-notes" placeholder="Highlights, hotels, anything…"></textarea>
       <div class="row" style="margin-top:14px">
-        <button class="btn" id="saveBtn">Save trip</button>
-        <button class="btn ghost" id="clearBtn">Clear</button>
+        <button class="btn" id="saveBtn">Save destination</button>
+        <button class="btn ghost" id="saveNextBtn" title="Saves, then keeps the trip and people so you can add the next stop">Save &amp; add next</button>
+        <button class="btn ghost" id="clearBtn" style="flex:0 0 auto">Clear</button>
       </div>
       <div class="hint" id="saveHint"></div>
     </div>
 
     <div class="tabpane" id="tab-trips">
-      <input id="tripFilter" placeholder="Filter trips…" />
+      <input id="tripFilter" placeholder="Filter trips or destinations…" />
+      <div id="tripSelBar"></div>
       <div id="tripList"></div>
     </div>
 
@@ -199,10 +220,10 @@
       </div>
       <label>Import (JSON or CSV)</label>
       <input type="file" id="impFile" accept=".json,.csv,.txt" />
-      <div class="hint">CSV columns: <code>date,end,title,country,lat,lng,people,notes,icon</code>. Separate people with <code>;</code>. Rows without lat/lng are geocoded automatically.</div>
+      <div class="hint">CSV columns: <code>date,end,title,country,lat,lng,people,notes,icon,trip</code>. Separate people with <code>;</code>. Rows without lat/lng are geocoded automatically.</div>
       <label>Bulk paste</label>
-      <textarea id="bulkBox" placeholder="2019-08-12, Rarotonga, Cook Islands, Ana; Nejc&#10;2021-05-03, Kyoto, Japan, Ana" style="min-height:90px"></textarea>
-      <button class="btn ghost" id="bulkBtn" style="margin-top:8px;width:100%">Add pasted lines (date, place, country, people)</button>
+      <textarea id="bulkBox" placeholder="2019-08-12, Rarotonga, Cook Islands, Ana; Nejc, Cook Islands 2019&#10;2019-08-18, Aitutaki, Cook Islands, Ana; Nejc, Cook Islands 2019" style="min-height:90px"></textarea>
+      <button class="btn ghost" id="bulkBtn" style="margin-top:8px;width:100%">Add pasted lines (date, place, country, people, trip)</button>
       <div class="hint" id="bulkHint"></div>
 
       <div class="sect"></div>
@@ -256,10 +277,11 @@
 
 <script>
 /* ===================== STATE =====================
-   Each trip: {id,title,country,lat,lng,date,end,people[],notes,icon(emoji or ''),
+   Each entry is a DESTINATION: {id,title,country,lat,lng,date,end,people[],notes,icon(emoji or ''),
+               trip(trip name; destinations with the same name form one trip; '' = single-destination trip),
                updatedAt(ms), deleted(bool), _synced(ms of last version confirmed on the sheet)} */
 const LS_KEY='travelGlobe.v1', LS_MB='travelGlobe.mb', LS_STYLE='travelGlobe.style', LS_SYNC='travelGlobe.sync';
-let trips=[], editingPeople=[], personFilter=null, pickMode=false;
+let trips=[], editingPeople=[], personFilter=null, tripSel=null, pickMode=false;
 let playing=false, playTimer=null, map=null, mapReady=false, tileErrors=0;
 const $=id=>document.getElementById(id);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
@@ -272,7 +294,21 @@ function load(){
 function save(){ localStorage.setItem(LS_KEY,JSON.stringify(trips)); }
 const live=()=>trips.filter(t=>!t.deleted);
 const sorted=()=>live().sort((a,b)=>a.date.localeCompare(b.date));
-function newTrip(o){ return {id:uid(),end:'',notes:'',country:'',people:[],icon:'',...o,updatedAt:Date.now(),deleted:false}; }
+function newTrip(o){ return {id:uid(),end:'',notes:'',country:'',people:[],icon:'',trip:'',...o,updatedAt:Date.now(),deleted:false}; }
+/* ---------- trip grouping ---------- */
+const tripKey=t=>(t.trip||'').trim()?'n:'+t.trip.trim().toLowerCase():'id:'+t.id;
+const tripName=t=>(t.trip||'').trim()||t.title;
+/** Group destinations (already date-sorted) into trips, ordered by trip start date. */
+function groups(list){
+  const m=new Map();
+  list.forEach(t=>{ const k=tripKey(t); if(!m.has(k)) m.set(k,{key:k,name:tripName(t),named:!!(t.trip||'').trim(),dests:[]}); m.get(k).dests.push(t); });
+  return [...m.values()].map(g=>({...g,start:g.dests[0].date,
+    end:g.dests.reduce((a,t)=>{const e=t.end||t.date; return e>a?e:a;},''),
+    people:[...new Set(g.dests.flatMap(t=>t.people))],
+    countries:[...new Set(g.dests.map(t=>t.country).filter(Boolean))]}))
+    .sort((a,b)=>a.start.localeCompare(b.start));
+}
+const findGroup=k=>groups(sorted()).find(g=>g.key===k);
 /** Call after any user change: re-render, persist, and queue a sync. */
 function changed(){ render(); scheduleSync(); }
 
@@ -418,6 +454,7 @@ const cursorTime=()=>tMin+(+$('timeSlider').value)*DAY;
 function activeTrips(s){
   let list=s;
   if(personFilter) list=list.filter(t=>t.people.includes(personFilter));
+  if(tripSel) return list.filter(t=>tripKey(t)===tripSel);   // a selected trip is shown in full, regardless of the slider
   const mode=$('modeSel').value;
   if(mode==='all'||!list.length) return list;
   const cur=cursorTime();
@@ -442,25 +479,43 @@ function render(){
     })});
   }
   $('dateLabel').textContent=!s.length?'No trips yet':($('modeSel').value==='all'?'All time':fmt(cursorTime()));
-  $('countLabel').textContent=`${act.length} trip${act.length===1?'':'s'} shown${personFilter?' · with '+personFilter:''}`;
+  const nG=groups(act).length, selG=tripSel&&groups(s).find(g=>g.key===tripSel);
+  if(tripSel&&!selG) tripSel=null;
+  $('countLabel').innerHTML=`${act.length} destination${act.length===1?'':'s'} · ${nG} trip${nG===1?'':'s'}`+
+    (personFilter?' · with '+esc(personFilter):'')+(selG?` · <b>${esc(selG.name)}</b> <a data-tclear="1">show all</a>`:'');
   renderTripList(s); renderPeople(s); renderStats(act); save();
 }
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function renderTripList(s){
   const q=($('tripFilter').value||'').toLowerCase();
-  const list=s.filter(t=>!q||(t.title+' '+(t.country||'')+' '+t.people.join(' ')).toLowerCase().includes(q));
+  const all=groups(s);
+  $('tripNames').innerHTML=all.filter(g=>g.named).map(g=>`<option value="${esc(g.name)}">`).join('');
+  const selG=tripSel&&all.find(g=>g.key===tripSel);
+  $('tripSelBar').innerHTML=selG?`<div class="selbar"><span>Map shows only <b>${esc(selG.name)}</b></span><a data-tclear="1">Show all</a></div>`:'';
+  const txt=t=>(t.title+' '+(t.country||'')+' '+t.people.join(' ')+' '+(t.trip||'')).toLowerCase();
+  const list=all.filter(g=>!q||g.name.toLowerCase().includes(q)||g.dests.some(t=>txt(t).includes(q)));
   const box=$('tripList'); box.innerHTML='';
   if(!list.length){ box.innerHTML='<div class="hint" style="margin-top:14px">No trips yet. Add one in the <b>Add</b> tab, connect your sheet, or load the demo trips.</div>'; return; }
   let year='';
-  list.forEach(t=>{
-    const y=t.date.slice(0,4);
+  list.forEach(g=>{
+    const y=g.start.slice(0,4);
     if(y!==year){ year=y; const h=document.createElement('div'); h.className='yr'; h.textContent=y; box.appendChild(h); }
-    const d=document.createElement('div'); d.className='trip'; d.style.borderLeftColor=colorFor(t.date);
-    d.innerHTML=`<div class="t">${t.icon?`<span class="ic">${esc(t.icon)}</span>`:''}${esc(t.title)}</div>
+    const multi=g.named||g.dests.length>1, one=g.dests[0];
+    const d=document.createElement('div');
+    d.className='tgroup'+(g.key===tripSel?' sel':''); d.style.borderLeftColor=colorFor(g.start);
+    const range=g.end&&g.end!==g.start?`${g.start} → ${g.end}`:g.start;
+    let html=`<div class="thead" data-tsel="${esc(g.key)}" title="Show this trip on the map">
+      <div class="t">${multi?'🧳 ':(one.icon?`<span class="ic">${esc(one.icon)}</span>`:'')}${esc(g.name)}</div>
+      <div class="m">${range}${multi?` · ${g.dests.length} destination${g.dests.length>1?'s':''}`:''}${g.countries.length?' · '+g.countries.map(esc).join(', '):''}</div>
+      ${g.people.length?`<div class="p">${g.people.map(esc).join(' · ')}</div>`:''}
+      <div class="acts"><a data-tsel="${esc(g.key)}">Show on map</a><a data-tadd="${esc(g.key)}">+ Destination</a>`+
+      (multi?`<a data-tren="${esc(g.key)}">Rename</a><a data-tdel="${esc(g.key)}">Delete trip</a>`
+            :`<a data-edit="${one.id}">Edit</a><a data-del="${one.id}">Delete</a>`)+`</div></div>`;
+    if(multi) html+=g.dests.map((t,i)=>`<div class="dest">
+      <div>${t.icon?`<span class="ic">${esc(t.icon)}</span>`:`<span style="color:var(--muted)">${i+1}.</span> `}<b>${esc(t.title)}</b></div>
       <div class="m">${t.date}${t.end?' → '+t.end:''}${t.country?' · '+esc(t.country):''}</div>
-      ${t.people.length?`<div class="p">${t.people.map(esc).join(' · ')}</div>`:''}
-      <div class="acts"><a data-fly="${t.id}">Fly to</a><a data-edit="${t.id}">Edit</a><a data-del="${t.id}">Delete</a></div>`;
-    box.appendChild(d);
+      <div class="acts"><a data-fly="${t.id}">Fly to</a><a data-edit="${t.id}">Edit</a><a data-del="${t.id}">Delete</a></div></div>`).join('');
+    d.innerHTML=html; box.appendChild(d);
   });
 }
 function renderPeople(s){
@@ -472,7 +527,7 @@ function renderPeople(s){
   names.forEach(n=>{
     const el=document.createElement('div');
     el.className='chip clickable'+(personFilter===n?' sel':'');
-    el.innerHTML=`${esc(n)} <span style="color:var(--muted)">${s.filter(t=>t.people.includes(n)).length}</span>`;
+    el.innerHTML=`${esc(n)} <span style="color:var(--muted)">${groups(s).filter(g=>g.people.includes(n)).length}</span>`;
     el.onclick=()=>{ personFilter=personFilter===n?null:n; render(); };
     box.appendChild(el);
   });
@@ -480,9 +535,11 @@ function renderPeople(s){
 function renderStats(act){
   let km=0; for(let i=1;i<act.length;i++) km+=haversine(act[i-1],act[i]);
   $('statsBox').innerHTML=`
-    <div class="stat"><b>${act.length}</b><span>trips</span></div>
+    <div class="stat"><b>${groups(act).length}</b><span>trips</span></div>
+    <div class="stat"><b>${act.length}</b><span>destinations</span></div>
     <div class="stat"><b>${new Set(act.map(t=>t.country).filter(Boolean)).size}</b><span>countries</span></div>
     <div class="stat"><b>${new Set(act.flatMap(t=>t.people)).size}</b><span>travel companions</span></div>
+    <div class="stat"><b>${Math.round(groups(act).reduce((a,g)=>a+(new Date(g.end)-new Date(g.start))/DAY+1,0))}</b><span>days travelling</span></div>
     <div class="stat"><b>${Math.round(km).toLocaleString()}</b><span>km between destinations (straight-line, in date order)</span></div>`;
 }
 
@@ -494,9 +551,10 @@ function showPopup(f,lngLat){
     <h3>${esc(f.properties.title)}</h3>
     <div class="pm">${esc(items[0].country||'')} · ${items.length} visit${items.length>1?'s':''}</div>
     ${items.map(t=>`<div class="pv"><b>${t.icon?esc(t.icon)+' ':''}${t.date}${t.end?' → '+t.end:''}</b>
+      ${(t.trip||'').trim()?`<div class="pm">🧳 ${esc(t.trip)}</div>`:''}
       ${t.people.length?`<div class="pp">with ${t.people.map(esc).join(', ')}</div>`:''}
       ${t.notes?`<div style="margin-top:4px;color:var(--muted)">${esc(t.notes)}</div>`:''}
-      <button data-edit="${t.id}">Edit</button><button class="del" data-del="${t.id}">Delete</button></div>`).join('')}
+      ${(t.trip||'').trim()?`<button data-tsel="${esc(tripKey(t))}">Show trip</button>`:''}<button data-edit="${t.id}">Edit</button><button class="del" data-del="${t.id}">Delete</button></div>`).join('')}
   </div>`).addTo(map);
 }
 function deleteTrip(id){
@@ -506,12 +564,64 @@ function deleteTrip(id){
   changed();
 }
 document.addEventListener('click',e=>{
-  const g=a=>e.target.getAttribute&&e.target.getAttribute(a);
-  if(g('data-edit')) editTrip(g('data-edit'));
-  if(g('data-del')&&confirm('Delete this trip?')) deleteTrip(g('data-del'));
-  const fl=g('data-fly');
-  if(fl){ const t=trips.find(x=>x.id===fl); if(t) map.flyTo({center:[t.lng,t.lat],zoom:5,duration:1800}); }
+  const el=e.target.closest&&e.target.closest('[data-edit],[data-del],[data-fly],[data-tsel],[data-tadd],[data-tren],[data-tdel],[data-tclear]');
+  if(!el) return;
+  const d=el.dataset;
+  if(d.edit) return editTrip(d.edit);
+  if(d.del){ if(confirm('Delete this destination?')) deleteTrip(d.del); return; }
+  if(d.fly){ const t=trips.find(x=>x.id===d.fly); if(t) map.flyTo({center:[t.lng,t.lat],zoom:6,duration:1800}); return; }
+  if(d.tclear){ tripSel=null; render(); return; }
+  if(d.tsel) return selectTrip(d.tsel);
+  if(d.tadd) return addToTrip(d.tadd);
+  if(d.tren) return renameTrip(d.tren);
+  if(d.tdel) return deleteGroup(d.tdel);
 });
+/* ---------- trip actions ---------- */
+function selectTrip(key){
+  tripSel = tripSel===key ? null : key;
+  document.querySelectorAll('.maplibregl-popup').forEach(p=>p.remove());
+  render();
+  const g=tripSel&&findGroup(key); if(!g||!mapReady) return;
+  const lats=g.dests.map(t=>t.lat), lngs=g.dests.map(t=>t.lng);
+  if(g.dests.length===1||(Math.max(...lats)-Math.min(...lats)<0.05&&Math.max(...lngs)-Math.min(...lngs)<0.05))
+    map.flyTo({center:[lngs[0],lats[0]],zoom:7,duration:1500});
+  else map.fitBounds([[Math.min(...lngs),Math.min(...lats)],[Math.max(...lngs),Math.max(...lats)]],{padding:90,maxZoom:8,duration:1500});
+}
+function addToTrip(key){
+  const g=findGroup(key); if(!g) return;
+  let name=g.name;
+  if(!g.named){            // single destination without a trip name: name the trip first
+    name=(prompt('Name this trip so more destinations can be added to it:',g.dests[0].title+' '+g.start.slice(0,4))||'').trim();
+    if(!name) return;
+    const t=g.dests[0]; t.trip=name; t.updatedAt=Date.now(); changed();
+  }
+  clearForm();
+  $('f-trip').value=name;
+  const last=g.dests[g.dests.length-1];
+  editingPeople=[...g.people]; drawChips();
+  $('f-date').value=last.end||last.date;
+  document.querySelector('.tabs button[data-tab="add"]').click();
+  $('sidebar').classList.remove('collapsed');
+  $('saveHint').textContent=`Adding a destination to "${name}". Search for the place, check the date, then save.`;
+  $('f-search').focus();
+}
+function renameTrip(key){
+  const g=findGroup(key); if(!g) return;
+  const name=(prompt('New trip name:',g.name)||'').trim();
+  if(!name||name===g.name) return;
+  const clash=groups(sorted()).find(x=>x.named&&x.key!==key&&x.name.toLowerCase()===name.toLowerCase());
+  if(clash&&!confirm(`A trip called "${clash.name}" already exists. Merge these destinations into it?`)) return;
+  const now=Date.now(); g.dests.forEach(t=>{ t.trip=clash?clash.name:name; t.updatedAt=now; });
+  if(tripSel===key) tripSel='n:'+name.toLowerCase();
+  changed();
+}
+function deleteGroup(key){
+  const g=findGroup(key); if(!g) return;
+  if(!confirm(`Delete the trip "${g.name}" and its ${g.dests.length} destination${g.dests.length>1?'s':''}?`)) return;
+  const now=Date.now(); g.dests.forEach(t=>{ t.deleted=true; t.updatedAt=now; });
+  if(tripSel===key) tripSel=null;
+  changed();
+}
 
 /* ===================== FORM / GEOCODING ===================== */
 async function geocode(q){
@@ -554,6 +664,14 @@ $('f-search').addEventListener('keydown',async e=>{
 });
 $('pickLink').onclick=()=>{ pickMode=true; $('pickBanner').style.display='block'; map.getCanvas().style.cursor='crosshair'; };
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ pickMode=false; $('pickBanner').style.display='none'; map.getCanvas().style.cursor=''; } });
+$('f-trip').addEventListener('change',()=>{
+  if($('f-id').value) return;                        // editing an existing destination: don't overwrite anything
+  const name=$('f-trip').value.trim(); if(!name) return;
+  const g=groups(sorted()).find(x=>x.named&&x.name.toLowerCase()===name.toLowerCase()); if(!g) return;
+  $('f-trip').value=g.name;                          // normalise spelling/case to the existing trip
+  if(!editingPeople.length){ editingPeople=[...g.people]; drawChips(); }
+  if(!$('f-date').value){ const last=g.dests[g.dests.length-1]; $('f-date').value=last.end||last.date; }
+});
 $('f-people').addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===','){ e.preventDefault(); addPerson(e.target.value); e.target.value=''; } });
 $('f-people').addEventListener('change',e=>{ if(e.target.value){ addPerson(e.target.value); e.target.value=''; } });
 function addPerson(n){ n=n.trim().replace(/[,;]$/,''); if(!n||editingPeople.includes(n)) return; editingPeople.push(n); drawChips(); }
@@ -566,28 +684,38 @@ function drawChips(){
     $('peopleChips').appendChild(c);
   });
 }
-$('saveBtn').onclick=()=>{
+function saveDest(addNext){
   if($('f-people').value.trim()){ addPerson($('f-people').value); $('f-people').value=''; }
   const lat=parseFloat($('f-lat').value),lng=parseFloat($('f-lng').value),date=$('f-date').value,title=$('f-title').value.trim();
-  if(!title||isNaN(lat)||isNaN(lng)||!date){ $('saveHint').textContent='Title, coordinates and start date are required.'; return; }
+  if(!title||isNaN(lat)||isNaN(lng)||!date){ $('saveHint').textContent='Destination, coordinates and start date are required.'; return; }
+  // Use the existing trip's exact spelling if the name matches one case-insensitively.
+  let trip=$('f-trip').value.trim();
+  const ex=trip&&groups(sorted()).find(g=>g.named&&g.name.toLowerCase()===trip.toLowerCase());
+  if(ex) trip=ex.name;
   const id=$('f-id').value;
-  const fields={title,country:$('f-country').value.trim(),lat,lng,date,end:$('f-end').value||'',people:[...editingPeople],notes:$('f-notes').value.trim(),icon:selIcon};
-  if(id){
-    trips=trips.map(t=>t.id===id?{...t,...fields,updatedAt:Date.now()}:t);
-  }else{
-    trips.push(newTrip(fields));
-  }
-  clearForm(); $('saveHint').textContent='Saved.';
-  changed(); map.flyTo({center:[lng,lat],zoom:4,duration:1500});
-};
+  const fields={title,country:$('f-country').value.trim(),lat,lng,date,end:$('f-end').value||'',people:[...editingPeople],
+                notes:$('f-notes').value.trim(),icon:selIcon,trip};
+  if(id) trips=trips.map(t=>t.id===id?{...t,...fields,updatedAt:Date.now()}:t);
+  else trips.push(newTrip(fields));
+  const keepPeople=[...editingPeople], nextDate=fields.end||fields.date;
+  clearForm();
+  if(addNext){
+    $('f-trip').value=trip; editingPeople=keepPeople; drawChips(); $('f-date').value=nextDate;
+    $('saveHint').textContent=trip?`Saved. Add the next destination of "${trip}".`:'Saved. Add the next destination.';
+    $('f-search').focus();
+  }else $('saveHint').textContent='Saved.';
+  changed(); map.flyTo({center:[lng,lat],zoom:5,duration:1500});
+}
+$('saveBtn').onclick=()=>saveDest(false);
+$('saveNextBtn').onclick=()=>saveDest(true);
 $('clearBtn').onclick=clearForm;
 function clearForm(){
-  ['f-id','f-title','f-lat','f-lng','f-date','f-end','f-country','f-notes','f-search','f-people'].forEach(i=>$(i).value='');
+  ['f-id','f-trip','f-title','f-lat','f-lng','f-date','f-end','f-country','f-notes','f-search','f-people'].forEach(i=>$(i).value='');
   editingPeople=[]; drawChips(); setIcon(''); $('geoResults').style.display='none'; $('saveHint').textContent='';
 }
 function editTrip(id){
   const t=trips.find(x=>x.id===id); if(!t) return;
-  $('f-id').value=t.id; $('f-title').value=t.title; $('f-lat').value=t.lat; $('f-lng').value=t.lng;
+  $('f-id').value=t.id; $('f-trip').value=t.trip||''; $('f-title').value=t.title; $('f-lat').value=t.lat; $('f-lng').value=t.lng;
   $('f-date').value=t.date; $('f-end').value=t.end||''; $('f-country').value=t.country||''; $('f-notes').value=t.notes||'';
   editingPeople=[...t.people]; drawChips(); setIcon(t.icon||'');
   document.querySelector('.tabs button[data-tab="add"]').click();
@@ -748,8 +876,8 @@ $('mbApply').onclick=()=>{
 function download(name,content,type){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([content],{type})); a.download=name; a.click(); }
 $('expJson').onclick=()=>download('travel-trips.json',JSON.stringify(sorted().map(strip),null,2),'application/json');
 $('expCsv').onclick=()=>{
-  const rows=[['date','end','title','country','lat','lng','people','notes','icon']];
-  sorted().forEach(t=>rows.push([t.date,t.end||'',t.title,t.country||'',t.lat,t.lng,t.people.join(';'),(t.notes||'').replace(/\n/g,' '),t.icon||'']));
+  const rows=[['date','end','title','country','lat','lng','people','notes','icon','trip']];
+  sorted().forEach(t=>rows.push([t.date,t.end||'',t.title,t.country||'',t.lat,t.lng,t.people.join(';'),(t.notes||'').replace(/\n/g,' '),t.icon||'',t.trip||'']));
   download('travel-trips.csv',rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n'),'text/csv');
 };
 function parseCsvLine(ln){
@@ -769,7 +897,7 @@ $('impFile').onchange=async e=>{
   try{
     if(f.name.toLowerCase().endsWith('.json')){
       JSON.parse(txt).forEach(t=>trips.push(newTrip({title:t.title,country:t.country||'',lat:+t.lat,lng:+t.lng,date:t.date,end:t.end||'',
-        people:Array.isArray(t.people)?t.people:splitPeople(t.people),notes:t.notes||'',icon:t.icon||''})));
+        people:Array.isArray(t.people)?t.people:splitPeople(t.people),notes:t.notes||'',icon:t.icon||'',trip:t.trip||''})));
     }else{
       const lines=txt.trim().split(/\r?\n/),cols=parseCsvLine(lines.shift().toLowerCase());
       for(const ln of lines){
@@ -779,7 +907,7 @@ $('impFile').onchange=async e=>{
           const g=await geocode(`${o.title} ${o.country||''}`); await sleep(1100);
           if(!g[0]) continue; lat=+g[0].lat; lng=+g[0].lon;
         }
-        trips.push(newTrip({title:o.title,country:o.country||'',lat,lng,date:o.date,end:o.end||'',people:splitPeople(o.people),notes:o.notes||'',icon:o.icon||''}));
+        trips.push(newTrip({title:o.title,country:o.country||'',lat,lng,date:o.date,end:o.end||'',people:splitPeople(o.people),notes:o.notes||'',icon:o.icon||'',trip:o.trip||''}));
       }
     }
     changed();
@@ -794,7 +922,7 @@ $('bulkBtn').onclick=async()=>{
     $('bulkHint').textContent=`Looking up ${title}…`;
     let g=[]; try{ g=await geocode(`${title} ${country||''}`); }catch(e){}
     if(g[0]){
-      trips.push(newTrip({title,country:country||g[0].display_name.split(',').pop().trim(),lat:+g[0].lat,lng:+g[0].lon,date,people:splitPeople(p[3])}));
+      trips.push(newTrip({title,country:country||g[0].display_name.split(',').pop().trim(),lat:+g[0].lat,lng:+g[0].lon,date,people:splitPeople(p[3]),trip:p[4]||''}));
       ok++; changed();
     }
     await sleep(1100);
@@ -803,14 +931,19 @@ $('bulkBtn').onclick=async()=>{
   $('bulkBox').value='';
 };
 $('demoBtn').onclick=()=>{
-  [['2014-07-18','Barcelona','Spain',41.3874,2.1686,'Ana','🏙️'],
-   ['2016-02-09','Reykjavík','Iceland',64.1466,-21.9426,'Ana;Nejc','🌋'],
-   ['2017-09-03','Kyoto','Japan',35.0116,135.7681,'Ana','🏛️'],
-   ['2019-08-12','Rarotonga','Cook Islands',-21.2367,-159.7777,'Ana;Maja;Luka','🏝️'],
-   ['2021-06-21','Lofoten','Norway',68.15,13.6,'Nejc','⛰️'],
-   ['2023-04-05','Marrakesh','Morocco',31.6295,-7.9811,'Ana;Maja','🍷'],
-   ['2025-10-11','El Chaltén','Argentina',-49.3315,-72.8863,'Nejc;Luka','🥾']
-  ].forEach(d=>trips.push(newTrip({date:d[0],title:d[1],country:d[2],lat:d[3],lng:d[4],people:d[5].split(';'),icon:d[6]})));
+  [['2014-07-18','Barcelona','Spain',41.3874,2.1686,'Ana','🏙️','Euro trip 2014'],
+   ['2014-07-22','Nice','France',43.7102,7.2620,'Ana','🏖️','Euro trip 2014'],
+   ['2014-07-26','Florence','Italy',43.7696,11.2558,'Ana','🏛️','Euro trip 2014'],
+   ['2016-02-09','Reykjavík','Iceland',64.1466,-21.9426,'Ana;Nejc','🌋',''],
+   ['2017-08-30','Tokyo','Japan',35.6762,139.6503,'Ana','🏙️','Japan 2017'],
+   ['2017-09-03','Kyoto','Japan',35.0116,135.7681,'Ana','🏛️','Japan 2017'],
+   ['2019-08-12','Rarotonga','Cook Islands',-21.2367,-159.7777,'Ana;Maja;Luka','🏝️','Cook Islands 2019'],
+   ['2019-08-18','Aitutaki','Cook Islands',-18.8561,-159.7853,'Ana;Maja;Luka','🤿','Cook Islands 2019'],
+   ['2021-06-21','Lofoten','Norway',68.15,13.6,'Nejc','⛰️',''],
+   ['2023-04-05','Marrakesh','Morocco',31.6295,-7.9811,'Ana;Maja','🍷',''],
+   ['2025-10-11','El Chaltén','Argentina',-49.3315,-72.8863,'Nejc;Luka','🥾','Patagonia 2025'],
+   ['2025-10-16','El Calafate','Argentina',-50.3379,-72.2648,'Nejc;Luka','⛰️','Patagonia 2025']
+  ].forEach(d=>trips.push(newTrip({date:d[0],title:d[1],country:d[2],lat:d[3],lng:d[4],people:d[5].split(';'),icon:d[6],trip:d[7]})));
   changed();
 };
 $('wipeBtn').onclick=()=>{
