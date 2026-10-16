@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Travel Globe — chronological trip map</title>
+<link href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c2430; --line:#2a3340;
+    --txt:#e6edf3; --muted:#8b98a8; --accent:#4aa3ff; --accent2:#ffb02e; --danger:#ff5c5c; --ok:#3fb950;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:'Segoe UI',system-ui,-apple-system,Roboto,sans-serif;background:var(--bg);color:var(--txt);overflow:hidden}
+  #app{display:flex;height:100%;width:100%}
+  #sidebar{width:360px;min-width:360px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;height:100%}
+  #sidebar.collapsed{width:0;min-width:0;overflow:hidden;border:none}
+  .side-head{padding:14px 16px;border-bottom:1px solid var(--line)}
+  .side-head h1{font-size:16px;margin:0 0 2px}
+  .side-head p{margin:0;font-size:11.5px;color:var(--muted)}
+  .tabs{display:flex;border-bottom:1px solid var(--line);background:var(--panel2)}
+  .tabs button{flex:1;background:none;border:none;color:var(--muted);padding:10px 4px;font-size:12px;cursor:pointer;border-bottom:2px solid transparent}
+  .tabs button.active{color:var(--txt);border-bottom-color:var(--accent);background:var(--panel)}
+  .tabpane{display:none;overflow-y:auto;padding:14px 16px;flex:1}
+  .tabpane.active{display:block}
+  label{display:block;font-size:11px;color:var(--muted);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.5px}
+  input,textarea,select{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent)}
+  textarea{resize:vertical;min-height:52px}
+  .row{display:flex;gap:8px}
+  .row>*{flex:1}
+  button.btn{background:var(--accent);border:none;color:#04121f;font-weight:600;padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13px}
+  button.btn:hover{filter:brightness(1.1)}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt);font-weight:500}
+  button.ghost:hover{border-color:var(--accent)}
+  button.danger{background:transparent;border:1px solid var(--danger);color:var(--danger)}
+  .hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.45}
+  .geo-results{margin-top:6px;border:1px solid var(--line);border-radius:8px;overflow:hidden;display:none}
+  .geo-results div{padding:7px 10px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--line)}
+  .geo-results div:last-child{border-bottom:none}
+  .geo-results div:hover{background:var(--panel2)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:3px 8px;font-size:11.5px;display:flex;align-items:center;gap:6px}
+  .chip span.x{cursor:pointer;color:var(--muted)}
+  .chip span.x:hover{color:var(--danger)}
+  .chip.sel{border-color:var(--accent);color:var(--accent)}
+  .chip.clickable{cursor:pointer}
+  .yr{font-size:11px;color:var(--accent2);letter-spacing:1px;margin:14px 0 6px;font-weight:700}
+  .trip{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:8px 10px;margin-bottom:7px}
+  .trip:hover{border-color:var(--accent)}
+  .trip .t{font-size:13px;font-weight:600}
+  .trip .m{font-size:11px;color:var(--muted);margin-top:2px}
+  .trip .p{font-size:11px;color:var(--accent);margin-top:3px}
+  .trip .acts{display:flex;gap:10px;margin-top:6px}
+  .trip .acts a{font-size:11px;color:var(--muted);cursor:pointer}
+  .trip .acts a:hover{color:var(--accent)}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px}
+  .stat b{display:block;font-size:20px;color:var(--accent)}
+  .stat span{font-size:11px;color:var(--muted)}
+  #mapwrap{flex:1;position:relative}
+  #map{position:absolute;inset:0}
+  #toggleSide{position:absolute;top:12px;left:12px;z-index:5;background:rgba(22,27,34,.92);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:7px 11px;cursor:pointer;font-size:13px}
+  #syncStatus{position:absolute;top:12px;left:58px;z-index:5;background:rgba(22,27,34,.92);border:1px solid var(--line);border-radius:8px;padding:7px 11px;font-size:12px;cursor:pointer;max-width:340px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #syncStatus::before{content:'●';margin-right:6px;color:var(--muted)}
+  #syncStatus.ok::before{color:var(--ok)}
+  #syncStatus.busy::before,#syncStatus.pending::before{color:var(--accent2)}
+  #syncStatus.err::before{color:var(--danger)}
+  #syncStatus.err{border-color:var(--danger)}
+  #styleSel{position:absolute;top:12px;right:12px;z-index:5;width:auto;background:rgba(22,27,34,.92)}
+  #tileWarn{position:absolute;top:56px;right:12px;z-index:6;max-width:320px;background:#3a1d1d;border:1px solid var(--danger);color:#ffd6d6;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.45;display:none}
+  #timebar{position:absolute;left:50%;transform:translateX(-50%);bottom:18px;width:min(880px,calc(100% - 40px));background:rgba(22,27,34,.94);border:1px solid var(--line);border-radius:12px;padding:10px 16px 12px;z-index:5}
+  .tb-top{display:flex;align-items:center;gap:12px;margin-bottom:4px}
+  #playBtn{width:34px;height:34px;border-radius:50%;background:var(--accent);border:none;color:#04121f;font-size:14px;cursor:pointer;flex:none}
+  #dateLabel{font-size:14px;font-weight:600;min-width:150px}
+  #countLabel{font-size:11.5px;color:var(--muted);flex:1;text-align:right}
+  #timeSlider{width:100%;accent-color:var(--accent);background:transparent;border:none;padding:0}
+  .tb-bot{display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);margin-top:2px}
+  .modes{display:flex;gap:6px;align-items:center}
+  .modes select{width:auto;padding:4px 6px;font-size:11px}
+  .maplibregl-popup-content{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-family:inherit;max-width:280px}
+  .maplibregl-popup-close-button{color:var(--muted);font-size:18px;padding:2px 7px}
+  .maplibregl-popup-tip{border-top-color:var(--panel)!important;border-bottom-color:var(--panel)!important}
+  .pop h3{margin:0 0 4px;font-size:14px}
+  .pop .pm{font-size:11px;color:var(--muted)}
+  .pop .pv{border-top:1px solid var(--line);margin-top:8px;padding-top:7px;font-size:12px}
+  .pop .pp{color:var(--accent);font-size:11px}
+  .pop button{margin-top:8px;margin-right:6px;font-size:11px;padding:4px 8px;border-radius:6px;cursor:pointer;background:transparent;border:1px solid var(--line);color:var(--txt)}
+  .pop button.del{border-color:var(--danger);color:var(--danger)}
+  #pickBanner{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:6;background:var(--accent2);color:#1b1200;padding:7px 14px;border-radius:8px;font-size:12.5px;font-weight:600;display:none}
+  .sect{border-top:1px solid var(--line);margin-top:16px;padding-top:6px}
+  h4{margin:4px 0 0;font-size:13px}
+  @media (max-width:760px){
+    #sidebar{position:absolute;z-index:10;height:100%;width:88vw;min-width:0}
+    #syncStatus{max-width:52vw}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="side-head">
+      <h1>Travel Globe</h1>
+      <p>Chronological trips · people · time slider</p>
+    </div>
+    <div class="tabs">
+      <button data-tab="add" class="active">Add</button>
+      <button data-tab="trips">Trips</button>
+      <button data-tab="people">People</button>
+      <button data-tab="data">Data &amp; Sync</button>
+    </div>
+
+    <div class="tabpane active" id="tab-add">
+      <input type="hidden" id="f-id" />
+      <label>Search a place</label>
+      <input id="f-search" placeholder="e.g. Rarotonga, Cook Islands" autocomplete="off" />
+      <div class="geo-results" id="geoResults"></div>
+      <div class="hint">Type and press <b>Enter</b> to search, or <a id="pickLink" style="color:var(--accent);cursor:pointer">pick a point on the map</a>.</div>
+      <label>Title / place</label>
+      <input id="f-title" placeholder="Rarotonga" />
+      <div class="row">
+        <div><label>Latitude</label><input id="f-lat" type="number" step="any" /></div>
+        <div><label>Longitude</label><input id="f-lng" type="number" step="any" /></div>
+      </div>
+      <div class="row">
+        <div><label>Start date</label><input id="f-date" type="date" /></div>
+        <div><label>End date (opt.)</label><input id="f-end" type="date" /></div>
+      </div>
+      <label>Country</label>
+      <input id="f-country" placeholder="Cook Islands" />
+      <label>People (Enter or comma to add)</label>
+      <input id="f-people" placeholder="Ana, Nejc…" list="peopleList" autocomplete="off" />
+      <datalist id="peopleList"></datalist>
+      <div class="chips" id="peopleChips"></div>
+      <label>Notes</label>
+      <textarea id="f-notes" placeholder="Highlights, hotels, anything…"></textarea>
+      <div class="row" style="margin-top:14px">
+        <button class="btn" id="saveBtn">Save trip</button>
+        <button class="btn ghost" id="clearBtn">Clear</button>
+      </div>
+      <div class="hint" id="saveHint"></div>
+    </div>
+
+    <div class="tabpane" id="tab-trips">
+      <input id="tripFilter" placeholder="Filter trips…" />
+      <div id="tripList"></div>
+    </div>
+
+    <div class="tabpane" id="tab-people">
+      <div class="hint">Click a name to show only trips with that person. Click again to clear.</div>
+      <div class="chips" id="peopleFilter" style="margin-top:10px"></div>
+      <div class="sect"><label>Travel stats (current filter)</label></div>
+      <div class="stats" id="statsBox"></div>
+    </div>
+
+    <div class="tabpane" id="tab-data">
+      <h4>Google Sheets sync</h4>
+      <div id="syncSetup">
+        <label>Apps Script web app URL</label>
+        <input id="gsUrl" placeholder="https://script.google.com/macros/s/…/exec" />
+        <label>Secret</label>
+        <input id="gsSecret" type="password" placeholder="same value as SECRET in Code.gs" />
+        <button class="btn" id="gsConnect" style="margin-top:10px;width:100%">Connect &amp; sync</button>
+        <div class="hint">On the first connection, trips already on this device are merged into the sheet. Nothing is overwritten.</div>
+      </div>
+      <div id="syncConnected" style="display:none">
+        <div class="hint" id="gsInfo"></div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn" id="gsSync">Sync now</button>
+          <button class="btn ghost" id="gsLink">Copy setup link</button>
+        </div>
+        <button class="btn danger" id="gsDisconnect" style="margin-top:8px;width:100%">Disconnect this device</button>
+        <div class="hint">The setup link connects another device in one tap. It contains your secret, so send it only to yourself.</div>
+      </div>
+
+      <div class="sect"></div>
+      <label>Mapbox Studio style (optional)</label>
+      <input id="mbToken" placeholder="pk.ey… public access token" />
+      <input id="mbStyle" placeholder="mapbox://styles/username/styleid" style="margin-top:6px" />
+      <button class="btn ghost" id="mbApply" style="margin-top:8px;width:100%">Use my Mapbox style</button>
+
+      <div class="sect"></div>
+      <label>Export</label>
+      <div class="row">
+        <button class="btn ghost" id="expJson">JSON</button>
+        <button class="btn ghost" id="expCsv">CSV</button>
+      </div>
+      <label>Import (JSON or CSV)</label>
+      <input type="file" id="impFile" accept=".json,.csv,.txt" />
+      <div class="hint">CSV columns: <code>date,end,title,country,lat,lng,people,notes</code>. Separate people with <code>;</code>. Rows without lat/lng are geocoded automatically.</div>
+      <label>Bulk paste</label>
+      <textarea id="bulkBox" placeholder="2019-08-12, Rarotonga, Cook Islands, Ana; Nejc&#10;2021-05-03, Kyoto, Japan, Ana" style="min-height:90px"></textarea>
+      <button class="btn ghost" id="bulkBtn" style="margin-top:8px;width:100%">Add pasted lines (date, place, country, people)</button>
+      <div class="hint" id="bulkHint"></div>
+
+      <div class="sect"></div>
+      <div class="row">
+        <button class="btn ghost" id="demoBtn">Load demo trips</button>
+        <button class="btn danger" id="wipeBtn">Erase all</button>
+      </div>
+      <div class="hint">When sync is on, "Erase all" also deletes the trips from the sheet and from your other devices.</div>
+    </div>
+  </aside>
+
+  <div id="mapwrap">
+    <button id="toggleSide">☰</button>
+    <div id="syncStatus" title="Sync status">Local only</div>
+    <select id="styleSel">
+      <option value="esriDark" selected>Dark (Esri)</option>
+      <option value="esriSat">Satellite (Esri)</option>
+      <option value="esriStreet">Streets (Esri)</option>
+      <option value="esriTopo">Topographic (Esri)</option>
+      <option value="esriLight">Light (Esri)</option>
+      <option value="mapbox">My Mapbox style</option>
+    </select>
+    <div id="tileWarn"></div>
+    <div id="pickBanner">Click the map to set the location · Esc to cancel</div>
+    <div id="map"></div>
+
+    <div id="timebar">
+      <div class="tb-top">
+        <button id="playBtn">▶</button>
+        <div id="dateLabel">—</div>
+        <div class="modes">
+          <select id="modeSel">
+            <option value="cum">Cumulative</option>
+            <option value="win">Rolling window</option>
+            <option value="all">Show all</option>
+          </select>
+          <select id="winSel">
+            <option value="3">3 mo</option>
+            <option value="12" selected>12 mo</option>
+            <option value="24">24 mo</option>
+            <option value="60">5 yr</option>
+          </select>
+        </div>
+        <div id="countLabel"></div>
+      </div>
+      <input type="range" id="timeSlider" min="0" max="100" value="100" />
+      <div class="tb-bot"><span id="minLabel"></span><span id="maxLabel"></span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===================== STATE =====================
+   Each trip: {id,title,country,lat,lng,date,end,people[],notes,
+               updatedAt(ms), deleted(bool), _synced(ms of last version confirmed on the sheet)} */
+const LS_KEY='travelGlobe.v1', LS_MB='travelGlobe.mb', LS_STYLE='travelGlobe.style', LS_SYNC='travelGlobe.sync';
+let trips=[], editingPeople=[], personFilter=null, pickMode=false;
+let playing=false, playTimer=null, map=null, mapReady=false, tileErrors=0;
+const $=id=>document.getElementById(id);
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+const DAY=86400000;
+
+function load(){
+  try{ trips=JSON.parse(localStorage.getItem(LS_KEY))||[]; }catch(e){ trips=[]; }
+  trips.forEach(t=>{ if(!t.updatedAt) t.updatedAt=Date.now(); });   // migrate v1/v2 data
+}
+function save(){ localStorage.setItem(LS_KEY,JSON.stringify(trips)); }
+const live=()=>trips.filter(t=>!t.deleted);
+const sorted=()=>live().sort((a,b)=>a.date.localeCompare(b.date));
+function newTrip(o){ return {id:uid(),end:'',notes:'',country:'',people:[],...o,updatedAt:Date.now(),deleted:false}; }
+/** Call after any user change: re-render, persist, and queue a sync. */
+function changed(){ render(); scheduleSync(); }
+
+/* ===================== BASEMAPS ===================== */
+const ESRI='https://server.arcgisonline.com/ArcGIS/rest/services/';
+function rasterStyle(tiles,attribution,bg,maxzoom=19,tileSize=256){
+  return {
+    version:8,
+    glyphs:'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    sources:{ base:{ type:'raster', tiles:[tiles], tileSize, maxzoom, attribution } },
+    layers:[ { id:'bg', type:'background', paint:{'background-color':bg} }, { id:'base', type:'raster', source:'base' } ]
+  };
+}
+function mapboxStyle(){
+  const mb=JSON.parse(localStorage.getItem(LS_MB)||'null'); if(!mb) return null;
+  const m=mb.st.match(/styles\/([^/?]+)\/([^/?]+)/); if(!m) return null;
+  return rasterStyle(`https://api.mapbox.com/styles/v1/${m[1]}/${m[2]}/tiles/512/{z}/{x}/{y}@2x?access_token=${mb.tok}`,
+    '© Mapbox © OpenStreetMap','#0b0f14',22,512);
+}
+const STYLES={
+  esriDark:  ()=>rasterStyle(ESRI+'Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}','Esri, HERE, Garmin, © OpenStreetMap','#0b0f14',16),
+  esriLight: ()=>rasterStyle(ESRI+'Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}','Esri, HERE, Garmin, © OpenStreetMap','#e8eaed',16),
+  esriSat:   ()=>rasterStyle(ESRI+'World_Imagery/MapServer/tile/{z}/{y}/{x}','Esri, Maxar, Earthstar Geographics','#08131f',19),
+  esriStreet:()=>rasterStyle(ESRI+'World_Street_Map/MapServer/tile/{z}/{y}/{x}','Esri, HERE, Garmin, © OpenStreetMap','#0b0f14',19),
+  esriTopo:  ()=>rasterStyle(ESRI+'World_Topo_Map/MapServer/tile/{z}/{y}/{x}','Esri, HERE, Garmin, © OpenStreetMap','#0b0f14',19),
+  mapbox:    mapboxStyle
+};
+
+/* ===================== MAP ===================== */
+function initMap(key){
+  let style=STYLES[key]&&STYLES[key]();
+  if(!style){ if(key==='mapbox') alert('Enter your Mapbox token and style URL in the Data tab first.'); key='esriDark'; style=STYLES.esriDark(); }
+  $('styleSel').value=key; localStorage.setItem(LS_STYLE,key);
+  const view=map?{center:map.getCenter(),zoom:map.getZoom()}:{center:[10,25],zoom:1.4};
+  if(map) map.remove();
+  mapReady=false; tileErrors=0; $('tileWarn').style.display='none';
+  map=new maplibregl.Map({container:'map',style,...view,attributionControl:{compact:true}});
+  map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),'bottom-right');
+  map.on('style.load',()=>{ try{ map.setProjection({type:'globe'}); }catch(e){} addLayers(); mapReady=true; render(); });
+  map.on('error',e=>{
+    if(e.sourceId==='base'||(e.error&&/tile|40[13]|Failed to fetch/i.test(String(e.error.message||e.error.status)))){
+      if(++tileErrors===3){
+        const st=e.error&&e.error.status?` (HTTP ${e.error.status})`:'';
+        $('tileWarn').innerHTML=key==='mapbox'
+          ?`Mapbox tiles are being rejected${st}. Check the pk. token, the style URL and the token's URL restrictions.`
+          :`Map tiles failed to load${st}. Check your network, proxy or firewall, or pick another basemap.`;
+        $('tileWarn').style.display='block';
+      }
+    }
+  });
+  map.on('click',e=>{ if(pickMode) setPick(e.lngLat.lat,e.lngLat.lng); });
+  map.on('click','trip-points',e=>{ if(!pickMode) showPopup(e.features[0],e.lngLat); });
+  map.on('mouseenter','trip-points',()=>map.getCanvas().style.cursor='pointer');
+  map.on('mouseleave','trip-points',()=>map.getCanvas().style.cursor=pickMode?'crosshair':'');
+}
+const empty=()=>({type:'FeatureCollection',features:[]});
+function addLayers(){
+  map.addSource('routes',{type:'geojson',data:empty()});
+  map.addSource('points',{type:'geojson',data:empty()});
+  map.addLayer({id:'route-lines',type:'line',source:'routes',layout:{'line-cap':'round','line-join':'round'},
+    paint:{'line-color':['get','color'],'line-width':['interpolate',['linear'],['zoom'],1,1.2,6,2.6],'line-opacity':0.6}});
+  map.addLayer({id:'trip-halo',type:'circle',source:'points',
+    paint:{'circle-radius':['interpolate',['linear'],['zoom'],1,10,6,22],'circle-color':['get','color'],'circle-opacity':0.2,'circle-blur':0.6}});
+  map.addLayer({id:'trip-points',type:'circle',source:'points',
+    paint:{'circle-radius':['interpolate',['linear'],['zoom'],1,['+',3.5,['*',0.9,['get','visits']]],6,['+',7,['*',1.6,['get','visits']]]],
+           'circle-color':['get','color'],'circle-stroke-width':1.5,'circle-stroke-color':'#fff','circle-opacity':0.95}});
+  map.addLayer({id:'trip-labels',type:'symbol',source:'points',
+    layout:{'text-field':['get','title'],'text-size':11.5,'text-offset':[0,1.3],'text-anchor':'top','text-font':['Open Sans Semibold'],'text-optional':true},
+    paint:{'text-color':'#fff','text-halo-color':'rgba(0,0,0,.85)','text-halo-width':1.4}});
+}
+
+/* ===================== GEOMETRY ===================== */
+function haversine(a,b){
+  const R=6371,r=Math.PI/180,dLat=(b.lat-a.lat)*r,dLng=(b.lng-a.lng)*r;
+  const s=Math.sin(dLat/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s));
+}
+function arc(a,b,n=64){
+  const r=Math.PI/180,d=180/Math.PI,φ1=a.lat*r,λ1=a.lng*r,φ2=b.lat*r,λ2=b.lng*r;
+  const Δ=2*Math.asin(Math.sqrt(Math.sin((φ2-φ1)/2)**2+Math.cos(φ1)*Math.cos(φ2)*Math.sin((λ2-λ1)/2)**2));
+  if(Δ===0) return [[a.lng,a.lat],[b.lng,b.lat]];
+  const pts=[];
+  for(let i=0;i<=n;i++){
+    const f=i/n,A=Math.sin((1-f)*Δ)/Math.sin(Δ),B=Math.sin(f*Δ)/Math.sin(Δ);
+    const x=A*Math.cos(φ1)*Math.cos(λ1)+B*Math.cos(φ2)*Math.cos(λ2);
+    const y=A*Math.cos(φ1)*Math.sin(λ1)+B*Math.cos(φ2)*Math.sin(λ2);
+    const z=A*Math.sin(φ1)+B*Math.sin(φ2);
+    pts.push([Math.atan2(y,x)*d,Math.atan2(z,Math.sqrt(x*x+y*y))*d]);
+  }
+  for(let i=1;i<pts.length;i++){ const dx=pts[i][0]-pts[i-1][0]; if(dx>180)pts[i][0]-=360; else if(dx<-180)pts[i][0]+=360; }
+  return pts;
+}
+let yMin=0,yMax=0;
+function colorFor(dateStr){
+  const f=yMax===yMin?0.5:(+dateStr.slice(0,4)-yMin)/(yMax-yMin);
+  return `hsl(${(200-f*200).toFixed(0)},85%,58%)`;
+}
+
+/* ===================== TIMELINE ===================== */
+let tMin=0,tMax=0;
+const fmt=ms=>new Date(ms).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});
+function refreshTimeline(s){
+  if(!s.length){ $('minLabel').textContent=''; $('maxLabel').textContent=''; return; }
+  const years=s.map(t=>+t.date.slice(0,4)); yMin=Math.min(...years); yMax=Math.max(...years);
+  tMin=new Date(s[0].date).getTime();
+  tMax=Math.max(...s.map(t=>new Date(t.end||t.date).getTime()));
+  const days=Math.max(1,Math.round((tMax-tMin)/DAY)),sl=$('timeSlider'),atEnd=+sl.value>=+sl.max;
+  sl.max=days; if(atEnd) sl.value=days;
+  $('minLabel').textContent=fmt(tMin); $('maxLabel').textContent=fmt(tMax);
+}
+const cursorTime=()=>tMin+(+$('timeSlider').value)*DAY;
+function activeTrips(s){
+  let list=s;
+  if(personFilter) list=list.filter(t=>t.people.includes(personFilter));
+  const mode=$('modeSel').value;
+  if(mode==='all'||!list.length) return list;
+  const cur=cursorTime();
+  if(mode==='cum') return list.filter(t=>new Date(t.date).getTime()<=cur);
+  const from=cur-(+$('winSel').value)*30.44*DAY;
+  return list.filter(t=>{const d=new Date(t.date).getTime(); return d<=cur&&d>=from;});
+}
+
+/* ===================== RENDER ===================== */
+function render(){
+  const s=sorted();
+  refreshTimeline(s);
+  const act=activeTrips(s);
+  if(mapReady){
+    const byLoc=new Map();
+    act.forEach(t=>{ const k=t.lat.toFixed(3)+','+t.lng.toFixed(3); if(!byLoc.has(k))byLoc.set(k,[]); byLoc.get(k).push(t); });
+    map.getSource('points').setData({type:'FeatureCollection',features:[...byLoc.values()].map(g=>{
+      const last=g[g.length-1];
+      return {type:'Feature',geometry:{type:'Point',coordinates:[last.lng,last.lat]},
+        properties:{title:last.title,visits:g.length,color:colorFor(last.date),ids:g.map(t=>t.id).join('|')}};
+    })});
+    const lines=[];
+    for(let i=1;i<act.length;i++){
+      const a=act[i-1],b=act[i]; if(a.lat===b.lat&&a.lng===b.lng) continue;
+      lines.push({type:'Feature',geometry:{type:'LineString',coordinates:arc(a,b)},properties:{color:colorFor(b.date)}});
+    }
+    map.getSource('routes').setData({type:'FeatureCollection',features:lines});
+  }
+  $('dateLabel').textContent=!s.length?'No trips yet':($('modeSel').value==='all'?'All time':fmt(cursorTime()));
+  $('countLabel').textContent=`${act.length} trip${act.length===1?'':'s'} shown${personFilter?' · with '+personFilter:''}`;
+  renderTripList(s); renderPeople(s); renderStats(act); save();
+}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function renderTripList(s){
+  const q=($('tripFilter').value||'').toLowerCase();
+  const list=s.filter(t=>!q||(t.title+' '+(t.country||'')+' '+t.people.join(' ')).toLowerCase().includes(q));
+  const box=$('tripList'); box.innerHTML='';
+  if(!list.length){ box.innerHTML='<div class="hint" style="margin-top:14px">No trips yet. Add one in the <b>Add</b> tab, connect your sheet, or load the demo trips.</div>'; return; }
+  let year='';
+  list.forEach(t=>{
+    const y=t.date.slice(0,4);
+    if(y!==year){ year=y; const h=document.createElement('div'); h.className='yr'; h.textContent=y; box.appendChild(h); }
+    const d=document.createElement('div'); d.className='trip'; d.style.borderLeftColor=colorFor(t.date);
+    d.innerHTML=`<div class="t">${esc(t.title)}</div>
+      <div class="m">${t.date}${t.end?' → '+t.end:''}${t.country?' · '+esc(t.country):''}</div>
+      ${t.people.length?`<div class="p">${t.people.map(esc).join(' · ')}</div>`:''}
+      <div class="acts"><a data-fly="${t.id}">Fly to</a><a data-edit="${t.id}">Edit</a><a data-del="${t.id}">Delete</a></div>`;
+    box.appendChild(d);
+  });
+}
+function renderPeople(s){
+  const names=[...new Set(s.flatMap(t=>t.people))].sort((a,b)=>a.localeCompare(b));
+  if(personFilter&&!names.includes(personFilter)) personFilter=null;
+  $('peopleList').innerHTML=names.map(n=>`<option value="${esc(n)}">`).join('');
+  const box=$('peopleFilter'); box.innerHTML='';
+  if(!names.length){ box.innerHTML='<div class="hint">No people added yet.</div>'; return; }
+  names.forEach(n=>{
+    const el=document.createElement('div');
+    el.className='chip clickable'+(personFilter===n?' sel':'');
+    el.innerHTML=`${esc(n)} <span style="color:var(--muted)">${s.filter(t=>t.people.includes(n)).length}</span>`;
+    el.onclick=()=>{ personFilter=personFilter===n?null:n; render(); };
+    box.appendChild(el);
+  });
+}
+function renderStats(act){
+  let km=0; for(let i=1;i<act.length;i++) km+=haversine(act[i-1],act[i]);
+  $('statsBox').innerHTML=`
+    <div class="stat"><b>${act.length}</b><span>trips</span></div>
+    <div class="stat"><b>${new Set(act.map(t=>t.country).filter(Boolean)).size}</b><span>countries</span></div>
+    <div class="stat"><b>${new Set(act.flatMap(t=>t.people)).size}</b><span>travel companions</span></div>
+    <div class="stat"><b>${Math.round(km).toLocaleString()}</b><span>km travelled (straight-line)</span></div>`;
+}
+
+/* ===================== POPUP / ACTIONS ===================== */
+function showPopup(f,lngLat){
+  const items=f.properties.ids.split('|').map(id=>trips.find(t=>t.id===id)).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date));
+  if(!items.length) return;
+  new maplibregl.Popup({maxWidth:'300px'}).setLngLat(lngLat).setHTML(`<div class="pop">
+    <h3>${esc(f.properties.title)}</h3>
+    <div class="pm">${esc(items[0].country||'')} · ${items.length} visit${items.length>1?'s':''}</div>
+    ${items.map(t=>`<div class="pv"><b>${t.date}${t.end?' → '+t.end:''}</b>
+      ${t.people.length?`<div class="pp">with ${t.people.map(esc).join(', ')}</div>`:''}
+      ${t.notes?`<div style="margin-top:4px;color:var(--muted)">${esc(t.notes)}</div>`:''}
+      <button data-edit="${t.id}">Edit</button><button class="del" data-del="${t.id}">Delete</button></div>`).join('')}
+  </div>`).addTo(map);
+}
+function deleteTrip(id){
+  const t=trips.find(x=>x.id===id); if(!t) return;
+  t.deleted=true; t.updatedAt=Date.now();          // tombstone, so other devices learn about the delete
+  document.querySelectorAll('.maplibregl-popup').forEach(p=>p.remove());
+  changed();
+}
+document.addEventListener('click',e=>{
+  const g=a=>e.target.getAttribute&&e.target.getAttribute(a);
+  if(g('data-edit')) editTrip(g('data-edit'));
+  if(g('data-del')&&confirm('Delete this trip?')) deleteTrip(g('data-del'));
+  const fl=g('data-fly');
+  if(fl){ const t=trips.find(x=>x.id===fl); if(t) map.flyTo({center:[t.lng,t.lat],zoom:5,duration:1800}); }
+});
+
+/* ===================== FORM / GEOCODING ===================== */
+async function geocode(q){
+  const r=await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=6&q=${encodeURIComponent(q)}`,{headers:{'Accept-Language':'en'}});
+  return r.json();
+}
+async function reverseGeocode(lat,lng){
+  try{
+    const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10`,{headers:{'Accept-Language':'en'}});
+    const j=await r.json();
+    if(j.address){
+      $('f-country').value=j.address.country||'';
+      if(!$('f-title').value) $('f-title').value=j.address.city||j.address.town||j.address.village||j.address.state||j.address.country||'';
+    }
+  }catch(e){}
+}
+function setPick(lat,lng){
+  $('f-lat').value=lat.toFixed(5); $('f-lng').value=lng.toFixed(5);
+  pickMode=false; $('pickBanner').style.display='none'; map.getCanvas().style.cursor='';
+  reverseGeocode(lat,lng);
+}
+$('f-search').addEventListener('keydown',async e=>{
+  if(e.key!=='Enter') return; e.preventDefault();
+  const q=e.target.value.trim(); if(!q) return;
+  const box=$('geoResults'); box.innerHTML='<div>Searching…</div>'; box.style.display='block';
+  let res=[]; try{ res=await geocode(q); }catch(err){ box.innerHTML='<div>Search service unreachable</div>'; return; }
+  if(!res.length){ box.innerHTML='<div>No match</div>'; return; }
+  box.innerHTML='';
+  res.forEach(r=>{
+    const d=document.createElement('div'); d.textContent=r.display_name;
+    d.onclick=()=>{
+      $('f-lat').value=(+r.lat).toFixed(5); $('f-lng').value=(+r.lon).toFixed(5);
+      $('f-title').value=r.display_name.split(',')[0];
+      $('f-country').value=r.display_name.split(',').pop().trim();
+      box.style.display='none';
+      map.flyTo({center:[+r.lon,+r.lat],zoom:5,duration:1500});
+    };
+    box.appendChild(d);
+  });
+});
+$('pickLink').onclick=()=>{ pickMode=true; $('pickBanner').style.display='block'; map.getCanvas().style.cursor='crosshair'; };
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ pickMode=false; $('pickBanner').style.display='none'; map.getCanvas().style.cursor=''; } });
+$('f-people').addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===','){ e.preventDefault(); addPerson(e.target.value); e.target.value=''; } });
+$('f-people').addEventListener('change',e=>{ if(e.target.value){ addPerson(e.target.value); e.target.value=''; } });
+function addPerson(n){ n=n.trim().replace(/[,;]$/,''); if(!n||editingPeople.includes(n)) return; editingPeople.push(n); drawChips(); }
+function drawChips(){
+  $('peopleChips').innerHTML='';
+  editingPeople.forEach((n,i)=>{
+    const c=document.createElement('div'); c.className='chip';
+    c.innerHTML=`${esc(n)} <span class="x">✕</span>`;
+    c.querySelector('.x').onclick=()=>{ editingPeople.splice(i,1); drawChips(); };
+    $('peopleChips').appendChild(c);
+  });
+}
+$('saveBtn').onclick=()=>{
+  if($('f-people').value.trim()){ addPerson($('f-people').value); $('f-people').value=''; }
+  const lat=parseFloat($('f-lat').value),lng=parseFloat($('f-lng').value),date=$('f-date').value,title=$('f-title').value.trim();
+  if(!title||isNaN(lat)||isNaN(lng)||!date){ $('saveHint').textContent='Title, coordinates and start date are required.'; return; }
+  const id=$('f-id').value;
+  const fields={title,country:$('f-country').value.trim(),lat,lng,date,end:$('f-end').value||'',people:[...editingPeople],notes:$('f-notes').value.trim()};
+  if(id){
+    trips=trips.map(t=>t.id===id?{...t,...fields,updatedAt:Date.now()}:t);
+  }else{
+    trips.push(newTrip(fields));
+  }
+  clearForm(); $('saveHint').textContent='Saved.';
+  changed(); map.flyTo({center:[lng,lat],zoom:4,duration:1500});
+};
+$('clearBtn').onclick=clearForm;
+function clearForm(){
+  ['f-id','f-title','f-lat','f-lng','f-date','f-end','f-country','f-notes','f-search','f-people'].forEach(i=>$(i).value='');
+  editingPeople=[]; drawChips(); $('geoResults').style.display='none'; $('saveHint').textContent='';
+}
+function editTrip(id){
+  const t=trips.find(x=>x.id===id); if(!t) return;
+  $('f-id').value=t.id; $('f-title').value=t.title; $('f-lat').value=t.lat; $('f-lng').value=t.lng;
+  $('f-date').value=t.date; $('f-end').value=t.end||''; $('f-country').value=t.country||''; $('f-notes').value=t.notes||'';
+  editingPeople=[...t.people]; drawChips();
+  document.querySelector('.tabs button[data-tab="add"]').click();
+  $('sidebar').classList.remove('collapsed');
+  $('saveHint').textContent='Editing. Press Save to update.';
+}
+
+/* ===================== GOOGLE SHEETS SYNC =====================
+   Model: the sheet is the shared master copy; every device keeps a full local copy.
+   - Pull: GET all rows.  Merge per trip id: the newer updatedAt wins.
+   - Push: POST only trips that are newer locally (or new).
+   - Deletes travel as tombstones (deleted=TRUE). A row removed from the sheet
+     by hand is dropped locally if this device had no unsynced edits to it.     */
+let syncCfg=JSON.parse(localStorage.getItem(LS_SYNC)||'null');
+let syncing=false,syncAgain=false,syncTimer=null,lastSyncOk=0;
+
+function setStatus(cls,msg){ const el=$('syncStatus'); el.className=cls; el.textContent=msg; el.title=msg; }
+function scheduleSync(delay=1500){
+  if(!syncCfg) return;
+  clearTimeout(syncTimer);
+  setStatus('pending','Changes pending…');
+  syncTimer=setTimeout(syncNow,delay);
+}
+const strip=t=>{ const {_synced,...rest}=t; return rest; };
+
+async function syncNow(){
+  if(!syncCfg) return;
+  if(syncing){ syncAgain=true; return; }
+  if(!navigator.onLine){ setStatus('err','Offline. Changes will sync when you reconnect.'); return; }
+  syncing=true; setStatus('busy','Syncing…');
+  const before=new Map(trips.map(t=>[t.id,t.updatedAt]));   // detect edits made while we await
+  try{
+    const r=await fetch(`${syncCfg.url}?secret=${encodeURIComponent(syncCfg.secret)}&_=${Date.now()}`);
+    const j=await r.json();
+    if(j.error) throw new Error(j.error==='unauthorized'?'wrong secret':j.error);
+
+    const remote=new Map(j.trips.map(t=>[t.id,t]));
+    const local=new Map(trips.map(t=>[t.id,t]));
+    const merged=new Map(), toPush=[];
+
+    for(const [id,rt] of remote){
+      const lt=local.get(id);
+      if(!lt||rt.updatedAt>lt.updatedAt) merged.set(id,{...rt,_synced:rt.updatedAt});
+      else if(lt.updatedAt>rt.updatedAt){ merged.set(id,lt); toPush.push(lt); }
+      else merged.set(id,{...lt,_synced:lt.updatedAt});
+    }
+    for(const [id,lt] of local){
+      if(remote.has(id)) continue;
+      if(lt._synced&&lt.updatedAt<=lt._synced) continue;    // row was removed from the sheet → drop here too
+      merged.set(id,lt); toPush.push(lt);
+    }
+
+    if(toPush.length){
+      const pr=await fetch(syncCfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify({secret:syncCfg.secret,trips:toPush.map(strip)})});
+      const pj=await pr.json();
+      if(pj.error) throw new Error(pj.error);
+      toPush.forEach(t=>{ t._synced=t.updatedAt; });
+    }
+
+    // Keep anything the user changed while the network calls were running.
+    for(const t of trips){
+      const b=before.get(t.id);
+      if(b===undefined||t.updatedAt>b){ merged.set(t.id,t); syncAgain=true; }
+    }
+    trips=[...merged.values()];
+    render();
+    lastSyncOk=Date.now();
+    const time=new Date(lastSyncOk).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    setStatus('ok',`Synced ${time}${toPush.length?` · ${toPush.length} sent`:''}${j.unresolved?` · ${j.unresolved} sheet row(s) need a valid place/date`:''}`);
+    updateSyncPanel();
+  }catch(err){
+    setStatus('err','Sync failed: '+(err.message||err)+'. Click to retry.');
+  }finally{
+    syncing=false;
+    if(syncAgain){ syncAgain=false; scheduleSync(300); }
+  }
+}
+
+function updateSyncPanel(){
+  $('syncSetup').style.display=syncCfg?'none':'block';
+  $('syncConnected').style.display=syncCfg?'block':'none';
+  if(syncCfg){
+    const short=syncCfg.url.replace(/^https:\/\/script\.google\.com\/macros\/s\//,'').slice(0,14)+'…';
+    $('gsInfo').innerHTML=`Connected to web app <code>${esc(short)}</code>.<br>`+
+      (lastSyncOk?`Last successful sync: ${new Date(lastSyncOk).toLocaleString()}.`:'Not synced yet.')+
+      `<br>The app syncs when it opens, when you switch back to it, every minute, and about 2 seconds after each change.`;
+  }else if(!$('syncStatus').className.includes('err')) setStatus('','Local only (sync off)');
+}
+function connect(url,secret){
+  url=url.trim(); secret=secret.trim();
+  if(!/^https:\/\/script\.google(usercontent)?\.com\/.+\/exec/.test(url)){ alert('The URL should be the Apps Script web app URL that ends in /exec.'); return false; }
+  if(!secret){ alert('Enter the secret from Code.gs.'); return false; }
+  syncCfg={url,secret}; localStorage.setItem(LS_SYNC,JSON.stringify(syncCfg));
+  updateSyncPanel(); syncNow(); return true;
+}
+$('gsConnect').onclick=()=>connect($('gsUrl').value,$('gsSecret').value);
+$('gsSync').onclick=syncNow;
+$('syncStatus').onclick=()=>{ if(syncCfg) syncNow(); else { document.querySelector('.tabs button[data-tab="data"]').click(); $('sidebar').classList.remove('collapsed'); } };
+$('gsDisconnect').onclick=()=>{
+  if(!confirm('Stop syncing on this device? Your trips stay here and in the sheet.')) return;
+  syncCfg=null; localStorage.removeItem(LS_SYNC); lastSyncOk=0; setStatus('','Local only (sync off)'); updateSyncPanel();
+};
+$('gsLink').onclick=async()=>{
+  const link=location.href.split('#')[0]+'#sync='+encodeURIComponent(btoa(JSON.stringify(syncCfg)));
+  try{ await navigator.clipboard.writeText(link); alert('Setup link copied. Open it on your other device.'); }
+  catch(e){ prompt('Copy this setup link:',link); }
+};
+function readSetupLink(){
+  const m=location.hash.match(/sync=([^&]+)/); if(!m) return;
+  try{
+    const cfg=JSON.parse(atob(decodeURIComponent(m[1])));
+    history.replaceState(null,'',location.href.split('#')[0]);   // remove secret from the address bar
+    if(cfg.url&&cfg.secret){ syncCfg=cfg; localStorage.setItem(LS_SYNC,JSON.stringify(cfg)); }
+  }catch(e){}
+}
+window.addEventListener('focus',()=>{ if(syncCfg&&Date.now()-lastSyncOk>10000) syncNow(); });
+window.addEventListener('online',()=>{ if(syncCfg) syncNow(); });
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&syncCfg&&Date.now()-lastSyncOk>10000) syncNow(); });
+setInterval(()=>{ if(syncCfg&&!document.hidden) syncNow(); },60000);
+
+/* ===================== UI WIRING ===================== */
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.tabpane').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); $('tab-'+b.dataset.tab).classList.add('active');
+});
+$('toggleSide').onclick=()=>{ $('sidebar').classList.toggle('collapsed'); setTimeout(()=>map.resize(),260); };
+$('tripFilter').oninput=()=>renderTripList(sorted());
+$('timeSlider').oninput=render;
+$('modeSel').onchange=render;
+$('winSel').onchange=render;
+$('styleSel').onchange=e=>initMap(e.target.value);
+$('playBtn').onclick=()=>{
+  playing=!playing; $('playBtn').textContent=playing?'❚❚':'▶';
+  if(!playing){ clearInterval(playTimer); return; }
+  if($('modeSel').value==='all') $('modeSel').value='cum';
+  const sl=$('timeSlider'); if(+sl.value>=+sl.max) sl.value=0;
+  playTimer=setInterval(()=>{
+    sl.value=Math.min(+sl.max,+sl.value+Math.max(1,Math.round(+sl.max/240)));
+    render();
+    if(+sl.value>=+sl.max){ clearInterval(playTimer); playing=false; $('playBtn').textContent='▶'; }
+  },50);
+};
+
+/* Mapbox */
+const savedMb=JSON.parse(localStorage.getItem(LS_MB)||'null');
+if(savedMb){ $('mbToken').value=savedMb.tok; $('mbStyle').value=savedMb.st; }
+$('mbApply').onclick=()=>{
+  const tok=$('mbToken').value.trim(),st=$('mbStyle').value.trim();
+  if(!tok.startsWith('pk.')){ alert('Use a public token (starts with "pk.").'); return; }
+  if(!/styles\/[^/]+\/[^/?]+/.test(st)){ alert('Style URL should look like mapbox://styles/username/styleid'); return; }
+  localStorage.setItem(LS_MB,JSON.stringify({tok,st}));
+  initMap('mapbox');
+};
+
+/* Import / export */
+function download(name,content,type){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([content],{type})); a.download=name; a.click(); }
+$('expJson').onclick=()=>download('travel-trips.json',JSON.stringify(sorted().map(strip),null,2),'application/json');
+$('expCsv').onclick=()=>{
+  const rows=[['date','end','title','country','lat','lng','people','notes']];
+  sorted().forEach(t=>rows.push([t.date,t.end||'',t.title,t.country||'',t.lat,t.lng,t.people.join(';'),(t.notes||'').replace(/\n/g,' ')]));
+  download('travel-trips.csv',rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n'),'text/csv');
+};
+function parseCsvLine(ln){
+  const out=[]; let cur='',q=false;
+  for(let i=0;i<ln.length;i++){
+    const ch=ln[i];
+    if(q){ if(ch==='"'&&ln[i+1]==='"'){cur+='"';i++;} else if(ch==='"') q=false; else cur+=ch; }
+    else if(ch==='"') q=true; else if(ch===','){ out.push(cur.trim()); cur=''; } else cur+=ch;
+  }
+  out.push(cur.trim()); return out;
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const splitPeople=s=>String(s||'').split(';').map(x=>x.trim()).filter(Boolean);
+$('impFile').onchange=async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const txt=await f.text();
+  try{
+    if(f.name.toLowerCase().endsWith('.json')){
+      JSON.parse(txt).forEach(t=>trips.push(newTrip({title:t.title,country:t.country||'',lat:+t.lat,lng:+t.lng,date:t.date,end:t.end||'',
+        people:Array.isArray(t.people)?t.people:splitPeople(t.people),notes:t.notes||''})));
+    }else{
+      const lines=txt.trim().split(/\r?\n/),cols=parseCsvLine(lines.shift().toLowerCase());
+      for(const ln of lines){
+        const c=parseCsvLine(ln),o={}; cols.forEach((k,i)=>o[k]=c[i]||'');
+        let lat=parseFloat(o.lat),lng=parseFloat(o.lng);
+        if(isNaN(lat)||isNaN(lng)){
+          const g=await geocode(`${o.title} ${o.country||''}`); await sleep(1100);
+          if(!g[0]) continue; lat=+g[0].lat; lng=+g[0].lon;
+        }
+        trips.push(newTrip({title:o.title,country:o.country||'',lat,lng,date:o.date,end:o.end||'',people:splitPeople(o.people),notes:o.notes||''}));
+      }
+    }
+    changed();
+  }catch(err){ alert('Import failed: '+err.message); }
+  e.target.value='';
+};
+$('bulkBtn').onclick=async()=>{
+  const lines=$('bulkBox').value.trim().split(/\r?\n/).filter(Boolean); let ok=0;
+  for(const ln of lines){
+    const p=ln.split(',').map(s=>s.trim()),[date,title,country]=p;
+    if(!date||!title) continue;
+    $('bulkHint').textContent=`Looking up ${title}…`;
+    let g=[]; try{ g=await geocode(`${title} ${country||''}`); }catch(e){}
+    if(g[0]){
+      trips.push(newTrip({title,country:country||g[0].display_name.split(',').pop().trim(),lat:+g[0].lat,lng:+g[0].lon,date,people:splitPeople(p[3])}));
+      ok++; changed();
+    }
+    await sleep(1100);
+  }
+  $('bulkHint').textContent=`Added ${ok} of ${lines.length} lines.`;
+  $('bulkBox').value='';
+};
+$('demoBtn').onclick=()=>{
+  [['2014-07-18','Barcelona','Spain',41.3874,2.1686,'Ana'],
+   ['2016-02-09','Reykjavík','Iceland',64.1466,-21.9426,'Ana;Nejc'],
+   ['2017-09-03','Kyoto','Japan',35.0116,135.7681,'Ana'],
+   ['2019-08-12','Rarotonga','Cook Islands',-21.2367,-159.7777,'Ana;Maja;Luka'],
+   ['2021-06-21','Lofoten','Norway',68.15,13.6,'Nejc'],
+   ['2023-04-05','Marrakesh','Morocco',31.6295,-7.9811,'Ana;Maja'],
+   ['2025-10-11','El Chaltén','Argentina',-49.3315,-72.8863,'Nejc;Luka']
+  ].forEach(d=>trips.push(newTrip({date:d[0],title:d[1],country:d[2],lat:d[3],lng:d[4],people:d[5].split(';')})));
+  changed();
+};
+$('wipeBtn').onclick=()=>{
+  const msg=syncCfg?'Delete ALL trips here, in the sheet, and on every synced device?':'Delete all trips from this browser?';
+  if(!confirm(msg)) return;
+  const now=Date.now(); trips.forEach(t=>{ t.deleted=true; t.updatedAt=now; }); personFilter=null; changed();
+};
+
+/* ===================== BOOT ===================== */
+readSetupLink();
+load(); drawChips();
+initMap(localStorage.getItem(LS_STYLE)||'esriDark');
+render();
+updateSyncPanel();
+if(syncCfg) syncNow();
+</script>
+</body>
+</html>
