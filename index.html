@@ -375,10 +375,10 @@ function addLayers(){
   map.addLayer({id:'route-lines',type:'line',source:'routes',layout:{'line-cap':'round','line-join':'round'},
     paint:{'line-color':['get','color'],'line-width':['interpolate',['linear'],['zoom'],1,1.6,6,3],'line-opacity':0.9}});
   map.addLayer({id:'route-arrows',type:'symbol',source:'routes',
-    layout:{'symbol-placement':'line','symbol-spacing':['interpolate',['linear'],['zoom'],1,70,6,140],
-            'icon-image':'route-arrow','icon-size':['interpolate',['linear'],['zoom'],1,0.55,6,0.85],
+    layout:{'symbol-placement':'line','symbol-spacing':['interpolate',['linear'],['zoom'],1,100,6,190],
+            'icon-image':'route-arrow','icon-size':['interpolate',['linear'],['zoom'],1,0.7,6,1.0],
             'icon-rotation-alignment':'map','icon-pitch-alignment':'map','icon-allow-overlap':true,'icon-ignore-placement':true},
-    paint:{'icon-color':['get','color'],'icon-halo-color':'rgba(0,0,0,.7)','icon-halo-width':1.2}});
+    paint:{'icon-color':['get','color'],'icon-halo-color':'rgba(0,0,0,.75)','icon-halo-width':1.6}});
   map.addSource('points',{type:'geojson',data:empty()});
   map.addLayer({id:'trip-halo',type:'circle',source:'points',
     paint:{'circle-radius':['interpolate',['linear'],['zoom'],1,12,6,24],'circle-color':['get','color'],'circle-opacity':0.18,'circle-blur':0.6}});
@@ -441,7 +441,7 @@ $('f-icon').addEventListener('input',e=>{ selIcon=e.target.value.trim(); drawIco
 
 /** Right-pointing arrowhead (line direction = +x), used as an SDF so it takes the line colour. */
 function arrowImage(){
-  const W=36,H=36,c=document.createElement('canvas'); c.width=W; c.height=H;
+  const W=48,H=48,c=document.createElement('canvas'); c.width=W; c.height=H;
   const g=c.getContext('2d');
   g.beginPath(); g.moveTo(W*0.82,H/2); g.lineTo(W*0.2,H*0.18); g.lineTo(W*0.36,H/2); g.lineTo(W*0.2,H*0.82); g.closePath();
   g.fillStyle='#000'; g.fill();
